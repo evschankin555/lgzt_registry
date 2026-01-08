@@ -3,8 +3,18 @@ from telebot.asyncio_storage import StateMemoryStorage
 from telebot.async_telebot import types
 from dotenv import load_dotenv
 import os
+from pathlib import Path
+import shutil
 from telebot import async_telebot, asyncio_filters
 from emoji import emojize
+
+# Автоматическое создание .env из example.env если .env не существует
+env_path = Path('.env')
+example_env_path = Path('example.env')
+
+if not env_path.exists() and example_env_path.exists():
+    shutil.copy(example_env_path, env_path)
+    print(f"Создан файл .env из {example_env_path}")
 
 load_dotenv()
 tg_bot_api_key = os.environ.get('telegram_bot_api')
@@ -69,5 +79,5 @@ markup_default.add(types.KeyboardButton("Регистрация"),types.Keyboard
 
 bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
-admin_ids = [9958633101, 2693757140]
-superadmin_ids = [995863310, 2693757140]
+admin_ids = [9958633101, 2693757140, 1632759029]
+superadmin_ids = [995863310, 2693757140, 1632759029]
