@@ -6,6 +6,7 @@ from modules.auth import (
     is_developer, get_developer_role, set_developer_role, should_show_as_admin
 )
 from modules.logger import log_role_switch, setup_logging
+from modules.admin_ui import show_admin_menu, show_companies_list, handle_admin_callback
 
 # Настройка логирования
 setup_logging()
@@ -21,32 +22,8 @@ async def start(msg):
     show_admin = should_show_as_admin(user_id, admin_ids)
 
     if show_admin:
-
-        await bot.send_message(chat_id=msg.chat.id, text=text_admin_welcome)
-
-        await bot.send_message(chat_id=msg.chat.id, text="Узнать статистику по пользователям - сколько регистраций было за день, неделю, месяц.", reply_markup=markup_get_user_stats)
-        # await bot.send_message(chat_id=msg.chat.id, text="Узнать, кто заблокировал бота.", reply_markup=markup_get_blocked_users)
-        await bot.send_message(chat_id=msg.chat.id, text="Узнать статистику по предприятиям.", reply_markup=markup_get_company_stats)
-        await bot.send_message(chat_id=msg.chat.id, text="Общая выгрузка данных.\n\nПользователи, предприятия, кто заблокировал бота, кто был удален, собранная информация по пользователям.", reply_markup=markup_get_total_excel)
-        await bot.send_message(chat_id=msg.chat.id, text="Изменить информацию по пользователю (предприятие) или удалить его.", reply_markup=markup_change_user_data)
-        await bot.send_message(chat_id=msg.chat.id, text="Добавить волонтера", reply_markup=markup_add_volunteer)
-
-        # Кнопка переключения режима только для developer
-        if is_developer(user_id):
-            current_role = get_developer_role(user_id)
-            if current_role == 'admin':
-                await bot.send_message(
-                    chat_id=msg.chat.id,
-                    text="🔧 Режим разработчика: АДМИН\nНажмите для переключения в режим пользователя:",
-                    reply_markup=markup_switch_to_user
-                )
-            else:
-                await bot.send_message(
-                    chat_id=msg.chat.id,
-                    text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
-                    reply_markup=markup_switch_to_admin
-                )
-
+        # Используем новое компактное админ-меню с одним сообщением
+        await show_admin_menu(bot, msg.chat.id, user_id)
         await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.admin_menu)
 
     elif await is_volunteer(user_id):
@@ -416,6 +393,11 @@ async def callback(call):
 
     user_id = call.from_user.id
 
+    # Сначала пробуем обработать через admin_ui
+    if call.data in ['admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users', 'admin_search', 'noop'] or call.data.startswith('companies_page_'):
+        await handle_admin_callback(call, bot)
+        return
+
     if call.data == 'get_total_excel':
 
         print('Generating an excel file...')
@@ -536,17 +518,8 @@ async def callback(call):
                 await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
             except:
                 pass
-            await bot.send_message(chat_id=user_id, text=text_admin_welcome)
-            await bot.send_message(chat_id=user_id, text="Узнать статистику по пользователям - сколько регистраций было за день, неделю, месяц.", reply_markup=markup_get_user_stats)
-            await bot.send_message(chat_id=user_id, text="Узнать статистику по предприятиям.", reply_markup=markup_get_company_stats)
-            await bot.send_message(chat_id=user_id, text="Общая выгрузка данных.\n\nПользователи, предприятия, кто заблокировал бота, кто был удален, собранная информация по пользователям.", reply_markup=markup_get_total_excel)
-            await bot.send_message(chat_id=user_id, text="Изменить информацию по пользователю (предприятие) или удалить его.", reply_markup=markup_change_user_data)
-            await bot.send_message(chat_id=user_id, text="Добавить волонтера", reply_markup=markup_add_volunteer)
-            await bot.send_message(
-                chat_id=user_id,
-                text="🔧 Режим разработчика: АДМИН\nНажмите для переключения в режим пользователя:",
-                reply_markup=markup_switch_to_user
-            )
+            # Используем новое компактное админ-меню
+            await show_admin_menu(bot, user_id, user_id)
             await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_menu)
         else:
             await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
@@ -622,18 +595,8 @@ async def callback(call):
                 await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
             except:
                 pass
-            # Показываем админ-меню
-            await bot.send_message(chat_id=user_id, text=text_admin_welcome)
-            await bot.send_message(chat_id=user_id, text="Узнать статистику по пользователям - сколько регистраций было за день, неделю, месяц.", reply_markup=markup_get_user_stats)
-            await bot.send_message(chat_id=user_id, text="Узнать статистику по предприятиям.", reply_markup=markup_get_company_stats)
-            await bot.send_message(chat_id=user_id, text="Общая выгрузка данных.\n\nПользователи, предприятия, кто заблокировал бота, кто был удален, собранная информация по пользователям.", reply_markup=markup_get_total_excel)
-            await bot.send_message(chat_id=user_id, text="Изменить информацию по пользователю (предприятие) или удалить его.", reply_markup=markup_change_user_data)
-            await bot.send_message(chat_id=user_id, text="Добавить волонтера", reply_markup=markup_add_volunteer)
-            await bot.send_message(
-                chat_id=user_id,
-                text="🔧 Режим разработчика: АДМИН\nНажмите для переключения в режим пользователя:",
-                reply_markup=markup_switch_to_user
-            )
+            # Используем новое компактное админ-меню
+            await show_admin_menu(bot, user_id, user_id)
             await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_menu)
         else:
             await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
