@@ -19,7 +19,7 @@ from modules.error_handler import safe_edit_message, safe_send_message
 logger = logging.getLogger(__name__)
 
 # Константы
-ITEMS_PER_PAGE = 20
+ITEMS_PER_PAGE = 10
 
 # Emoji для статусов
 STATUS_EMOJI = {
