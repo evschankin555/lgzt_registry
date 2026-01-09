@@ -675,6 +675,307 @@ async def show_user_card(bot: AsyncTeleBot, chat_id: int, message_id: int, user_
     await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
 
 
+# ===== ПОИСК =====
+
+async def search_users(query: str) -> List[dict]:
+    """
+    Поиск пользователей по ФИО, ID или телефону
+
+    Args:
+        query: Поисковый запрос
+
+    Returns:
+        Список найденных пользователей (макс 20)
+    """
+    async with SessionLocal() as session:
+        query = query.strip()
+
+        # Пробуем поиск по ID
+        if query.isdigit():
+            user_id = int(query)
+            result = await session.execute(
+                select(User)
+                .options(selectinload(User.company))
+                .where(User.id == user_id)
+            )
+            user = result.scalar_one_or_none()
+            if user:
+                return [{
+                    'id': user.id,
+                    'last_name': user.last_name,
+                    'first_name': user.first_name,
+                    'status': user.status,
+                    'company_name': user.company.name if user.company else 'Не назначено'
+                }]
+
+        # Поиск по ФИО или телефону
+        search_pattern = f"%{query}%"
+        stmt = (
+            select(User)
+            .options(selectinload(User.company))
+            .where(
+                (User.last_name.ilike(search_pattern)) |
+                (User.first_name.ilike(search_pattern)) |
+                (User.father_name.ilike(search_pattern)) |
+                (User.phone_number.ilike(search_pattern))
+            )
+            .order_by(User.last_name, User.first_name)
+            .limit(20)
+        )
+
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+
+        return [
+            {
+                'id': u.id,
+                'last_name': u.last_name,
+                'first_name': u.first_name,
+                'status': u.status,
+                'company_name': u.company.name if u.company else 'Не назначено'
+            }
+            for u in users
+        ]
+
+
+def build_search_results_keyboard(users: List[dict]) -> InlineKeyboardMarkup:
+    """
+    Построить клавиатуру результатов поиска
+    """
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
+    for user in users:
+        emoji = STATUS_EMOJI.get(user['status'], '⚪')
+        btn_text = f"{emoji} {user['id']}. {user['last_name']} {user['first_name']}"
+        if len(btn_text) > 55:
+            btn_text = btn_text[:52] + "..."
+        keyboard.add(
+            InlineKeyboardButton(btn_text, callback_data=f"user_{user['id']}")
+        )
+
+    keyboard.add(
+        InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search"),
+        InlineKeyboardButton("↩️ В меню", callback_data="admin_menu")
+    )
+
+    return keyboard
+
+
+async def show_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int] = None):
+    """
+    Показать приглашение к поиску
+    """
+    text = (
+        "🔍 <b>Поиск пользователя</b>\n\n"
+        "Введите для поиска:\n"
+        "• Фамилию или имя\n"
+        "• ID пользователя\n"
+        "• Номер телефона\n\n"
+        "Отправьте текст сообщением:"
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("↩️ В меню", callback_data="admin_menu"))
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, message_id: Optional[int] = None):
+    """
+    Показать результаты поиска
+    """
+    users = await search_users(query)
+
+    if not users:
+        text = f"🔍 <b>Поиск: {query}</b>\n\n❌ Ничего не найдено"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(
+            InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search"),
+            InlineKeyboardButton("↩️ В меню", callback_data="admin_menu")
+        )
+    else:
+        text = f"🔍 <b>Поиск: {query}</b>\n\nНайдено: {len(users)}\n\nВыберите пользователя:"
+        keyboard = build_search_results_keyboard(users)
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+# ===== ИЗМЕНЕНИЕ ПРЕДПРИЯТИЯ =====
+
+async def get_all_companies() -> List[dict]:
+    """
+    Получить все предприятия для выбора
+    """
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(Company).order_by(Company.id)
+        )
+        companies = result.scalars().all()
+
+        return [{'id': c.id, 'name': c.name} for c in companies]
+
+
+def build_company_select_keyboard(companies: List[dict], user_id: int, page: int = 0) -> InlineKeyboardMarkup:
+    """
+    Построить клавиатуру выбора предприятия
+    """
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
+    # Пагинация компаний (по 10 на страницу)
+    start = page * ITEMS_PER_PAGE
+    end = start + ITEMS_PER_PAGE
+    page_companies = companies[start:end]
+
+    for company in page_companies:
+        btn_text = f"🏭 {company['id']}. {company['name']}"
+        if len(btn_text) > 55:
+            btn_text = btn_text[:52] + "..."
+        keyboard.add(
+            InlineKeyboardButton(btn_text, callback_data=f"set_company_{user_id}_{company['id']}")
+        )
+
+    # Пагинация
+    total_pages = (len(companies) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    if total_pages > 1:
+        nav_buttons = []
+
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton("◀️", callback_data=f"sel_comp_page_{user_id}_{page - 1}")
+            )
+
+        nav_buttons.append(
+            InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")
+        )
+
+        if page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton("▶️", callback_data=f"sel_comp_page_{user_id}_{page + 1}")
+            )
+
+        keyboard.row(*nav_buttons)
+
+    keyboard.add(
+        InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}")
+    )
+
+    return keyboard
+
+
+async def show_company_select(bot: AsyncTeleBot, chat_id: int, message_id: int, user_id: int, page: int = 0):
+    """
+    Показать выбор предприятия для пользователя
+    """
+    user = await get_user_detail(user_id)
+    if not user:
+        await safe_edit_message(bot, chat_id, message_id, "❌ Пользователь не найден")
+        return
+
+    companies = await get_all_companies()
+
+    full_name = f"{user['last_name']} {user['first_name']}"
+    text = (
+        f"✏️ <b>Изменение предприятия</b>\n\n"
+        f"Пользователь: {full_name}\n"
+        f"Текущее: {user['company_name']}\n\n"
+        f"Выберите новое предприятие:"
+    )
+
+    keyboard = build_company_select_keyboard(companies, user_id, page)
+
+    await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+
+
+async def change_user_company(user_id: int, new_company_id: int) -> bool:
+    """
+    Изменить предприятие пользователя
+
+    Returns:
+        True если успешно
+    """
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            return False
+
+        user.company_id = new_company_id
+        await session.commit()
+        return True
+
+
+# ===== УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ =====
+
+def build_delete_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """
+    Построить клавиатуру подтверждения удаления
+    """
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_delete_{user_id}"),
+        InlineKeyboardButton("❌ Отмена", callback_data=f"user_{user_id}")
+    )
+    return keyboard
+
+
+async def show_delete_confirm(bot: AsyncTeleBot, chat_id: int, message_id: int, user_id: int):
+    """
+    Показать подтверждение удаления
+    """
+    user = await get_user_detail(user_id)
+    if not user:
+        await safe_edit_message(bot, chat_id, message_id, "❌ Пользователь не найден")
+        return
+
+    full_name = f"{user['last_name']} {user['first_name']}"
+    if user['father_name']:
+        full_name += f" {user['father_name']}"
+
+    text = (
+        f"⚠️ <b>Подтверждение удаления</b>\n\n"
+        f"Вы уверены, что хотите удалить пользователя?\n\n"
+        f"👤 {full_name}\n"
+        f"🆔 ID: {user['id']}\n"
+        f"🏭 {user['company_name']}\n\n"
+        f"<i>Пользователь сможет зарегистрироваться снова.</i>"
+    )
+
+    keyboard = build_delete_confirm_keyboard(user_id)
+
+    await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+
+
+async def delete_user(user_id: int) -> bool:
+    """
+    Удалить пользователя (установить статус deleted)
+
+    Returns:
+        True если успешно
+    """
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            return False
+
+        user.status = 'deleted'
+        user.tg_id = None  # Отвязываем Telegram
+        await session.commit()
+        return True
+
+
 async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
     """
     Обработчик callback'ов админ-панели
@@ -743,6 +1044,55 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
             user_db_id = int(data.split("_")[1])
             await show_user_card(bot, chat_id, message_id, user_db_id)
             await bot.answer_callback_query(call.id)
+
+        # Поиск - показать приглашение
+        elif data == "admin_search":
+            await show_search_prompt(bot, chat_id, message_id)
+            await bot.answer_callback_query(call.id)
+            # Устанавливаем состояние ожидания поиска
+            return "set_search_state"
+
+        # Изменение предприятия - показать выбор
+        elif data.startswith("edit_user_company_"):
+            user_db_id = int(data.split("_")[3])
+            await show_company_select(bot, chat_id, message_id, user_db_id)
+            await bot.answer_callback_query(call.id)
+
+        # Пагинация выбора предприятия
+        elif data.startswith("sel_comp_page_"):
+            parts = data.split("_")
+            user_db_id = int(parts[3])
+            page = int(parts[4])
+            await show_company_select(bot, chat_id, message_id, user_db_id, page)
+            await bot.answer_callback_query(call.id)
+
+        # Установка предприятия
+        elif data.startswith("set_company_"):
+            parts = data.split("_")
+            user_db_id = int(parts[2])
+            company_id = int(parts[3])
+            success = await change_user_company(user_db_id, company_id)
+            if success:
+                await bot.answer_callback_query(call.id, "✅ Предприятие изменено")
+                await show_user_card(bot, chat_id, message_id, user_db_id)
+            else:
+                await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
+
+        # Удаление - показать подтверждение
+        elif data.startswith("delete_user_"):
+            user_db_id = int(data.split("_")[2])
+            await show_delete_confirm(bot, chat_id, message_id, user_db_id)
+            await bot.answer_callback_query(call.id)
+
+        # Подтверждение удаления
+        elif data.startswith("confirm_delete_"):
+            user_db_id = int(data.split("_")[2])
+            success = await delete_user(user_db_id)
+            if success:
+                await bot.answer_callback_query(call.id, "✅ Пользователь удален")
+                await show_user_card(bot, chat_id, message_id, user_db_id)
+            else:
+                await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
 
         # Заглушка для noop
         elif data == "noop":

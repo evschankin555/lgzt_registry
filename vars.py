@@ -39,6 +39,9 @@ class MyStates(StatesGroup):
     admin_read_user_id_for_edit = State()
     admin_read_comp_id_for_edit = State()
     admin_read_volunteer_id = State()
+    # Новые состояния для админ-панели
+    admin_search = State()  # Ожидание поискового запроса
+    admin_edit_user_company = State()  # Ожидание ID нового предприятия
 
 
 markup_agree_to_nda = types.InlineKeyboardMarkup()

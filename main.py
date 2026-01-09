@@ -6,7 +6,10 @@ from modules.auth import (
     is_developer, get_developer_role, set_developer_role, should_show_as_admin
 )
 from modules.logger import log_role_switch, setup_logging
-from modules.admin_ui import show_admin_menu, show_companies_list, handle_admin_callback
+from modules.admin_ui import (
+    show_admin_menu, show_companies_list, handle_admin_callback,
+    show_search_results
+)
 
 # Настройка логирования
 setup_logging()
@@ -388,7 +391,20 @@ async def admin_read_volunteer_id(msg):
     await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
 
 
-@bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit])
+@bot.message_handler(content_types='text', state=[MyStates.admin_search])
+async def admin_handle_search(msg):
+    """Обработка поискового запроса"""
+    query = msg.text.strip()
+
+    if not query:
+        await bot.send_message(chat_id=msg.chat.id, text="Введите текст для поиска")
+        return
+
+    await show_search_results(bot, msg.chat.id, query)
+    await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
+
+
+@bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit, MyStates.admin_search])
 async def callback(call):
 
     user_id = call.from_user.id
@@ -399,11 +415,16 @@ async def callback(call):
     ]
     admin_ui_prefixes = [
         'companies_page_', 'company_', 'comp_users_',
-        'users_page_', 'users_filter_', 'user_'
+        'users_page_', 'users_filter_', 'user_',
+        'edit_user_company_', 'sel_comp_page_', 'set_company_',
+        'delete_user_', 'confirm_delete_'
     ]
 
     if call.data in admin_ui_callbacks or any(call.data.startswith(p) for p in admin_ui_prefixes):
-        await handle_admin_callback(call, bot)
+        result = await handle_admin_callback(call, bot)
+        # Если нужно установить состояние поиска
+        if result == "set_search_state":
+            await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_search)
         return
 
     if call.data == 'get_total_excel':
