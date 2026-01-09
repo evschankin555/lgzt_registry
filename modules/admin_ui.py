@@ -690,18 +690,29 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
     """
     async with SessionLocal() as session:
         query_text = query.strip()
-        # Поиск без lower() - SQLite не поддерживает lower() для кириллицы
-        search_pattern = f"%{query_text}%"
+        # Создаем паттерны для обоих регистров (первая буква)
+        pattern_original = f"%{query_text}%"
+        pattern_lower = f"%{query_text.lower()}%"
+        pattern_upper = f"%{query_text.upper()}%"
+        pattern_capitalize = f"%{query_text.capitalize()}%"
 
-        logger.info(f"Search query: '{query}', pattern: '{search_pattern}'")
+        logger.info(f"Search query: '{query}', patterns: original='{pattern_original}', lower='{pattern_lower}', capitalize='{pattern_capitalize}'")
 
-        # Базовые условия поиска (LIKE в SQLite регистронезависим для ASCII,
-        # для кириллицы ищем как есть)
+        # Базовые условия поиска - ищем по всем вариантам регистра
         search_conditions = (
-            (User.last_name.like(search_pattern)) |
-            (User.first_name.like(search_pattern)) |
-            (User.father_name.like(search_pattern)) |
-            (User.phone_number.like(search_pattern))
+            (User.last_name.like(pattern_original)) |
+            (User.last_name.like(pattern_lower)) |
+            (User.last_name.like(pattern_upper)) |
+            (User.last_name.like(pattern_capitalize)) |
+            (User.first_name.like(pattern_original)) |
+            (User.first_name.like(pattern_lower)) |
+            (User.first_name.like(pattern_upper)) |
+            (User.first_name.like(pattern_capitalize)) |
+            (User.father_name.like(pattern_original)) |
+            (User.father_name.like(pattern_lower)) |
+            (User.father_name.like(pattern_upper)) |
+            (User.father_name.like(pattern_capitalize)) |
+            (User.phone_number.like(pattern_original))
         )
 
         # Если это число - добавляем поиск по ID
