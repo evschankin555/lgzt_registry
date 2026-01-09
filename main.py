@@ -404,8 +404,12 @@ async def admin_handle_search(msg):
     async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
         data['search_query'] = query
 
-    await show_search_results(bot, msg.chat.id, query, page=0)
-    await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
+    found = await show_search_results(bot, msg.chat.id, query, page=0)
+
+    if found:
+        # Найдено - выходим из режима поиска
+        await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
+    # Если не найдено - остаемся в режиме поиска (admin_search state)
 
 
 @bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit, MyStates.admin_search])

@@ -692,6 +692,8 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
         query_text = query.strip().lower()
         search_pattern = f"%{query_text}%"
 
+        logger.info(f"Search query: '{query}', pattern: '{search_pattern}'")
+
         # Базовые условия поиска (используем lower() для кириллицы в SQLite)
         search_conditions = (
             (func.lower(User.last_name).like(search_pattern)) |
@@ -711,6 +713,8 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
         )
         total = count_result.scalar() or 0
 
+        logger.info(f"Search found {total} results for '{query}'")
+
         # Получаем пользователей с пагинацией
         stmt = (
             select(User)
@@ -723,6 +727,8 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
 
         result = await session.execute(stmt)
         users = result.scalars().all()
+
+        logger.info(f"Search returned {len(users)} users on page {page}")
 
         users_list = [
             {
@@ -804,27 +810,40 @@ async def show_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Option
         await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
 
 
-async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, page: int = 0, message_id: Optional[int] = None):
+async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, page: int = 0, message_id: Optional[int] = None) -> bool:
     """
     Показать результаты поиска с пагинацией
+
+    Returns:
+        True если найдены результаты, False если не найдено (нужно остаться в режиме поиска)
     """
     users, total = await search_users_page(query, page)
 
     if not users:
-        text = f"🔍 <b>Поиск: {query}</b>\n\n❌ Ничего не найдено"
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(
-            InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search"),
-            InlineKeyboardButton("👥 К пользователям", callback_data="admin_users")
+        text = (
+            f"🔍 <b>Поиск: {query}</b>\n\n"
+            f"❌ Ничего не найдено\n\n"
+            f"Введите другой запрос или нажмите кнопку ниже:"
         )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("👥 К пользователям", callback_data="admin_users"))
+
+        if message_id:
+            await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        else:
+            await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+        return False  # Не найдено - остаемся в режиме поиска
     else:
         text = f"🔍 <b>Поиск: {query}</b>\n\nНайдено: {total}\n\nВыберите пользователя:"
         keyboard = build_search_results_keyboard(users, query, page, total)
 
-    if message_id:
-        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
-    else:
-        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+        if message_id:
+            await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        else:
+            await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+        return True  # Найдено - можно выйти из режима поиска
 
 
 # ===== ИЗМЕНЕНИЕ ПРЕДПРИЯТИЯ =====
