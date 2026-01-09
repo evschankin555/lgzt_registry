@@ -1,0 +1,38 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Excel files (если они временные)
+# Раскомментируйте если нужно исключить:
+# *.xlsx
+# *.xls
+
+# Database files (если используются локальные БД)
+*.db
+*.sqlite
+*.sqlite3
