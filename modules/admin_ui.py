@@ -689,20 +689,20 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
         Tuple[список пользователей, общее количество]
     """
     async with SessionLocal() as session:
-        query = query.strip()
-        search_pattern = f"%{query}%"
+        query_text = query.strip().lower()
+        search_pattern = f"%{query_text}%"
 
-        # Базовые условия поиска
+        # Базовые условия поиска (используем lower() для кириллицы в SQLite)
         search_conditions = (
-            (User.last_name.ilike(search_pattern)) |
-            (User.first_name.ilike(search_pattern)) |
-            (User.father_name.ilike(search_pattern)) |
-            (User.phone_number.ilike(search_pattern))
+            (func.lower(User.last_name).like(search_pattern)) |
+            (func.lower(User.first_name).like(search_pattern)) |
+            (func.lower(User.father_name).like(search_pattern)) |
+            (User.phone_number.like(f"%{query.strip()}%"))
         )
 
         # Если это число - добавляем поиск по ID
-        if query.isdigit():
-            user_id = int(query)
+        if query.strip().isdigit():
+            user_id = int(query.strip())
             search_conditions = search_conditions | (User.id == user_id)
 
         # Общее количество
