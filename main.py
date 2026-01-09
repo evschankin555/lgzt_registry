@@ -27,7 +27,7 @@ async def start(msg):
 
     else:
 
-        await bot.send_message(chat_id=msg.chat.id, text="Приветствую 🍓🍓. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+        await bot.send_message(chat_id=msg.chat.id, text="Приветствую 🍓🍓🍓. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
 
 
 
