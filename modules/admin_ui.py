@@ -462,7 +462,7 @@ async def get_users_page(page: int = 0, status_filter: Optional[str] = None) -> 
         stmt = (
             base_query
             .options(selectinload(User.company))
-            .order_by(User.id.desc())
+            .order_by(User.id.asc())
             .offset(page * ITEMS_PER_PAGE)
             .limit(ITEMS_PER_PAGE)
         )
