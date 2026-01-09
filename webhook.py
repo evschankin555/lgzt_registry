@@ -170,15 +170,24 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         logger.info("Обновление прав на файлы...")
                         run_command('find . -path ./.git -prune -o -exec chown www-data:www-data {} +')
                         
-                        # Перезапуск сервиса webhook (если указан)
-                        if SERVICE_NAME:
-                            logger.info(f"Перезапуск сервиса {SERVICE_NAME}...")
-                            run_command(f"systemctl restart {SERVICE_NAME}")
-                        
-                        # Перезапуск сервиса бота после деплоя
+                        # Перезапуск сервиса бота после деплоя (ПЕРЕД перезапуском webhook!)
                         if BOT_SERVICE_NAME:
                             logger.info(f"Перезапуск сервиса бота {BOT_SERVICE_NAME}...")
-                            run_command(f"systemctl restart {BOT_SERVICE_NAME}")
+                            output, error, code = run_command(f"systemctl restart {BOT_SERVICE_NAME}")
+                            if code != 0:
+                                logger.error(f"Не удалось перезапустить сервис бота: {error}")
+                        
+                        # Перезапуск сервиса webhook (если указан) - в конце, асинхронно
+                        if SERVICE_NAME:
+                            logger.info(f"Перезапуск сервиса {SERVICE_NAME}...")
+                            # Используем subprocess.Popen для асинхронного перезапуска,
+                            # чтобы не прерывать выполнение до отправки ответа
+                            try:
+                                subprocess.Popen(['systemctl', 'restart', SERVICE_NAME], 
+                                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                logger.info(f"Команда перезапуска webhook отправлена")
+                            except Exception as e:
+                                logger.error(f"Ошибка при перезапуске webhook: {e}")
                         
                         logger.info("Деплой успешно завершен!")
                     else:
