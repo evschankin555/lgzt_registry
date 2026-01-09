@@ -677,56 +677,54 @@ async def show_user_card(bot: AsyncTeleBot, chat_id: int, message_id: int, user_
 
 # ===== ПОИСК =====
 
-async def search_users(query: str) -> List[dict]:
+async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]:
     """
-    Поиск пользователей по ФИО, ID или телефону
+    Поиск пользователей по ФИО, ID или телефону с пагинацией
 
     Args:
         query: Поисковый запрос
+        page: Номер страницы
 
     Returns:
-        Список найденных пользователей (макс 20)
+        Tuple[список пользователей, общее количество]
     """
     async with SessionLocal() as session:
         query = query.strip()
+        search_pattern = f"%{query}%"
 
-        # Пробуем поиск по ID
+        # Базовые условия поиска
+        search_conditions = (
+            (User.last_name.ilike(search_pattern)) |
+            (User.first_name.ilike(search_pattern)) |
+            (User.father_name.ilike(search_pattern)) |
+            (User.phone_number.ilike(search_pattern))
+        )
+
+        # Если это число - добавляем поиск по ID
         if query.isdigit():
             user_id = int(query)
-            result = await session.execute(
-                select(User)
-                .options(selectinload(User.company))
-                .where(User.id == user_id)
-            )
-            user = result.scalar_one_or_none()
-            if user:
-                return [{
-                    'id': user.id,
-                    'last_name': user.last_name,
-                    'first_name': user.first_name,
-                    'status': user.status,
-                    'company_name': user.company.name if user.company else 'Не назначено'
-                }]
+            search_conditions = search_conditions | (User.id == user_id)
 
-        # Поиск по ФИО или телефону
-        search_pattern = f"%{query}%"
+        # Общее количество
+        count_result = await session.execute(
+            select(func.count(User.id)).where(search_conditions)
+        )
+        total = count_result.scalar() or 0
+
+        # Получаем пользователей с пагинацией
         stmt = (
             select(User)
             .options(selectinload(User.company))
-            .where(
-                (User.last_name.ilike(search_pattern)) |
-                (User.first_name.ilike(search_pattern)) |
-                (User.father_name.ilike(search_pattern)) |
-                (User.phone_number.ilike(search_pattern))
-            )
-            .order_by(User.last_name, User.first_name)
-            .limit(20)
+            .where(search_conditions)
+            .order_by(User.id.asc())
+            .offset(page * ITEMS_PER_PAGE)
+            .limit(ITEMS_PER_PAGE)
         )
 
         result = await session.execute(stmt)
         users = result.scalars().all()
 
-        return [
+        users_list = [
             {
                 'id': u.id,
                 'last_name': u.last_name,
@@ -737,10 +735,12 @@ async def search_users(query: str) -> List[dict]:
             for u in users
         ]
 
+        return users_list, total
 
-def build_search_results_keyboard(users: List[dict]) -> InlineKeyboardMarkup:
+
+def build_search_results_keyboard(users: List[dict], query: str, page: int, total: int) -> InlineKeyboardMarkup:
     """
-    Построить клавиатуру результатов поиска
+    Построить клавиатуру результатов поиска с пагинацией
     """
     keyboard = InlineKeyboardMarkup(row_width=1)
 
@@ -753,9 +753,30 @@ def build_search_results_keyboard(users: List[dict]) -> InlineKeyboardMarkup:
             InlineKeyboardButton(btn_text, callback_data=f"user_{user['id']}")
         )
 
+    # Пагинация
+    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    if total_pages > 1:
+        nav_buttons = []
+
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton("◀️", callback_data=f"search_page_{page - 1}")
+            )
+
+        nav_buttons.append(
+            InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")
+        )
+
+        if page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton("▶️", callback_data=f"search_page_{page + 1}")
+            )
+
+        keyboard.row(*nav_buttons)
+
     keyboard.add(
         InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search"),
-        InlineKeyboardButton("↩️ В меню", callback_data="admin_menu")
+        InlineKeyboardButton("👥 К пользователям", callback_data="admin_users")
     )
 
     return keyboard
@@ -768,14 +789,14 @@ async def show_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Option
     text = (
         "🔍 <b>Поиск пользователя</b>\n\n"
         "Введите для поиска:\n"
-        "• Фамилию или имя\n"
+        "• Часть фамилии или имени\n"
         "• ID пользователя\n"
         "• Номер телефона\n\n"
         "Отправьте текст сообщением:"
     )
 
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("↩️ В меню", callback_data="admin_menu"))
+    keyboard.add(InlineKeyboardButton("👥 К пользователям", callback_data="admin_users"))
 
     if message_id:
         await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
@@ -783,22 +804,22 @@ async def show_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Option
         await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
 
 
-async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, message_id: Optional[int] = None):
+async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, page: int = 0, message_id: Optional[int] = None):
     """
-    Показать результаты поиска
+    Показать результаты поиска с пагинацией
     """
-    users = await search_users(query)
+    users, total = await search_users_page(query, page)
 
     if not users:
         text = f"🔍 <b>Поиск: {query}</b>\n\n❌ Ничего не найдено"
         keyboard = InlineKeyboardMarkup()
         keyboard.add(
             InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search"),
-            InlineKeyboardButton("↩️ В меню", callback_data="admin_menu")
+            InlineKeyboardButton("👥 К пользователям", callback_data="admin_users")
         )
     else:
-        text = f"🔍 <b>Поиск: {query}</b>\n\nНайдено: {len(users)}\n\nВыберите пользователя:"
-        keyboard = build_search_results_keyboard(users)
+        text = f"🔍 <b>Поиск: {query}</b>\n\nНайдено: {total}\n\nВыберите пользователя:"
+        keyboard = build_search_results_keyboard(users, query, page, total)
 
     if message_id:
         await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
@@ -1050,7 +1071,14 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
             await show_search_prompt(bot, chat_id, message_id)
             await bot.answer_callback_query(call.id)
             # Устанавливаем состояние ожидания поиска
-            return "set_search_state"
+            return {"action": "set_search_state"}
+
+        # Пагинация результатов поиска
+        elif data.startswith("search_page_"):
+            page = int(data.split("_")[2])
+            await bot.answer_callback_query(call.id)
+            # Возвращаем запрос на пагинацию поиска
+            return {"action": "search_paginate", "page": page}
 
         # Изменение предприятия - показать выбор
         elif data.startswith("edit_user_company_"):

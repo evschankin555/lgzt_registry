@@ -400,7 +400,11 @@ async def admin_handle_search(msg):
         await bot.send_message(chat_id=msg.chat.id, text="Введите текст для поиска")
         return
 
-    await show_search_results(bot, msg.chat.id, query)
+    # Сохраняем поисковый запрос для пагинации
+    async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
+        data['search_query'] = query
+
+    await show_search_results(bot, msg.chat.id, query, page=0)
     await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
 
 
@@ -417,14 +421,21 @@ async def callback(call):
         'companies_page_', 'company_', 'comp_users_',
         'users_page_', 'users_filter_', 'user_',
         'edit_user_company_', 'sel_comp_page_', 'set_company_',
-        'delete_user_', 'confirm_delete_'
+        'delete_user_', 'confirm_delete_', 'search_page_'
     ]
 
     if call.data in admin_ui_callbacks or any(call.data.startswith(p) for p in admin_ui_prefixes):
         result = await handle_admin_callback(call, bot)
-        # Если нужно установить состояние поиска
-        if result == "set_search_state":
-            await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_search)
+        # Обработка специальных действий
+        if isinstance(result, dict):
+            if result.get("action") == "set_search_state":
+                await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_search)
+            elif result.get("action") == "search_paginate":
+                # Получаем сохраненный поисковый запрос и показываем нужную страницу
+                async with bot.retrieve_data(user_id, call.message.chat.id) as data:
+                    search_query = data.get('search_query', '')
+                if search_query:
+                    await show_search_results(bot, call.message.chat.id, search_query, result.get("page", 0), call.message.message_id)
         return
 
     if call.data == 'get_total_excel':
