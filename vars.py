@@ -81,3 +81,23 @@ bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
 admin_ids = [9958633101, 2693757140, 1632759029]
 superadmin_ids = [995863310, 2693757140, 1632759029]
+
+# ID разработчика - может переключать режимы admin/user для тестирования
+developer_ids = [1632759029]
+
+def is_developer(user_id: int) -> bool:
+    """Проверка является ли пользователь разработчиком"""
+    return user_id in developer_ids
+
+# Кнопки переключения режимов для разработчика
+markup_switch_to_user = types.InlineKeyboardMarkup()
+markup_switch_to_user.add(types.InlineKeyboardButton(
+    text=f'{emojize(":counterclockwise_arrows_button:")} Режим пользователя',
+    callback_data='switch_to_user'
+))
+
+markup_switch_to_admin = types.InlineKeyboardMarkup()
+markup_switch_to_admin.add(types.InlineKeyboardButton(
+    text=f'{emojize(":counterclockwise_arrows_button:")} Режим админа',
+    callback_data='switch_to_admin'
+))

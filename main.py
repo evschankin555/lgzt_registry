@@ -2,6 +2,13 @@ import os
 import asyncio
 from vars import *
 from functions import *
+from modules.auth import (
+    is_developer, get_developer_role, set_developer_role, should_show_as_admin
+)
+from modules.logger import log_role_switch, setup_logging
+
+# Настройка логирования
+setup_logging()
 
 
 @bot.message_handler(['start'])
@@ -9,7 +16,11 @@ async def start(msg):
 
     user_id = msg.from_user.id
 
-    if user_id in admin_ids:
+    # Проверяем, показывать ли админ-интерфейс
+    # Для developer учитывается текущий режим (admin/user)
+    show_admin = should_show_as_admin(user_id, admin_ids)
+
+    if show_admin:
 
         await bot.send_message(chat_id=msg.chat.id, text=text_admin_welcome)
 
@@ -20,14 +31,39 @@ async def start(msg):
         await bot.send_message(chat_id=msg.chat.id, text="Изменить информацию по пользователю (предприятие) или удалить его.", reply_markup=markup_change_user_data)
         await bot.send_message(chat_id=msg.chat.id, text="Добавить волонтера", reply_markup=markup_add_volunteer)
 
+        # Кнопка переключения режима только для developer
+        if is_developer(user_id):
+            current_role = get_developer_role(user_id)
+            if current_role == 'admin':
+                await bot.send_message(
+                    chat_id=msg.chat.id,
+                    text="🔧 Режим разработчика: АДМИН\nНажмите для переключения в режим пользователя:",
+                    reply_markup=markup_switch_to_user
+                )
+            else:
+                await bot.send_message(
+                    chat_id=msg.chat.id,
+                    text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
+                    reply_markup=markup_switch_to_admin
+                )
+
         await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.admin_menu)
 
     elif await is_volunteer(user_id):
         await bot.send_message(chat_id=msg.chat.id, text='Привет, волонтер! Ты можешь регистрировать пользователей. Для старта регистрации нажми кнопку "регистрация"', reply_markup=markup_default_volunteer)
 
     else:
-
-        await bot.send_message(chat_id=msg.chat.id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+        # Обычный пользователь
+        # Если это developer в режиме user, показываем кнопку переключения
+        if is_developer(user_id):
+            await bot.send_message(chat_id=msg.chat.id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(
+                chat_id=msg.chat.id,
+                text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
+                reply_markup=markup_switch_to_admin
+            )
+        else:
+            await bot.send_message(chat_id=msg.chat.id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
 
 
 
@@ -509,6 +545,54 @@ async def callback(call):
 
         await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
         await bot.delete_state(user_id=call.from_user.id, chat_id=call.message.chat.id)
+
+    # Обработка переключения режимов для developer
+    elif call.data == 'switch_to_user':
+        if is_developer(user_id):
+            set_developer_role(user_id, 'user')
+            log_role_switch(user_id, 'user')
+            await bot.answer_callback_query(call.id, "Переключено в режим пользователя")
+            # Удаляем сообщение с кнопкой и отправляем /start заново
+            try:
+                await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except:
+                pass
+            # Имитируем /start
+            await bot.send_message(chat_id=user_id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(
+                chat_id=user_id,
+                text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
+                reply_markup=markup_switch_to_admin
+            )
+            await bot.delete_state(user_id=user_id, chat_id=call.message.chat.id)
+        else:
+            await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
+
+    elif call.data == 'switch_to_admin':
+        if is_developer(user_id):
+            set_developer_role(user_id, 'admin')
+            log_role_switch(user_id, 'admin')
+            await bot.answer_callback_query(call.id, "Переключено в режим админа")
+            # Удаляем сообщение с кнопкой
+            try:
+                await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except:
+                pass
+            # Показываем админ-меню
+            await bot.send_message(chat_id=user_id, text=text_admin_welcome)
+            await bot.send_message(chat_id=user_id, text="Узнать статистику по пользователям - сколько регистраций было за день, неделю, месяц.", reply_markup=markup_get_user_stats)
+            await bot.send_message(chat_id=user_id, text="Узнать статистику по предприятиям.", reply_markup=markup_get_company_stats)
+            await bot.send_message(chat_id=user_id, text="Общая выгрузка данных.\n\nПользователи, предприятия, кто заблокировал бота, кто был удален, собранная информация по пользователям.", reply_markup=markup_get_total_excel)
+            await bot.send_message(chat_id=user_id, text="Изменить информацию по пользователю (предприятие) или удалить его.", reply_markup=markup_change_user_data)
+            await bot.send_message(chat_id=user_id, text="Добавить волонтера", reply_markup=markup_add_volunteer)
+            await bot.send_message(
+                chat_id=user_id,
+                text="🔧 Режим разработчика: АДМИН\nНажмите для переключения в режим пользователя:",
+                reply_markup=markup_switch_to_user
+            )
+            await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_menu)
+        else:
+            await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
 
 
 asyncio.run(bot.infinity_polling())
