@@ -394,7 +394,15 @@ async def callback(call):
     user_id = call.from_user.id
 
     # Сначала пробуем обработать через admin_ui
-    if call.data in ['admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users', 'admin_search', 'noop'] or call.data.startswith('companies_page_'):
+    admin_ui_callbacks = [
+        'admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users', 'admin_search', 'noop'
+    ]
+    admin_ui_prefixes = [
+        'companies_page_', 'company_', 'comp_users_',
+        'users_page_', 'users_filter_', 'user_'
+    ]
+
+    if call.data in admin_ui_callbacks or any(call.data.startswith(p) for p in admin_ui_prefixes):
         await handle_admin_callback(call, bot)
         return
 
