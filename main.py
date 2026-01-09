@@ -507,6 +507,50 @@ async def callback(call):
 
         await bot.set_state(chat_id=user_id, user_id=user_id, state=MyStates.admin_read_volunteer_id)
 
+    # Обработка переключения режимов для developer (в состоянии admin_menu)
+    elif call.data == 'switch_to_user':
+        if is_developer(user_id):
+            set_developer_role(user_id, 'user')
+            log_role_switch(user_id, 'user')
+            await bot.answer_callback_query(call.id, "Переключено в режим пользователя")
+            try:
+                await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except:
+                pass
+            await bot.send_message(chat_id=user_id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(
+                chat_id=user_id,
+                text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
+                reply_markup=markup_switch_to_admin
+            )
+            await bot.delete_state(user_id=user_id, chat_id=call.message.chat.id)
+        else:
+            await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
+
+    elif call.data == 'switch_to_admin':
+        if is_developer(user_id):
+            set_developer_role(user_id, 'admin')
+            log_role_switch(user_id, 'admin')
+            await bot.answer_callback_query(call.id, "Переключено в режим админа")
+            try:
+                await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+            except:
+                pass
+            await bot.send_message(chat_id=user_id, text=text_admin_welcome)
+            await bot.send_message(chat_id=user_id, text="Узнать статистику по пользователям - сколько регистраций было за день, неделю, месяц.", reply_markup=markup_get_user_stats)
+            await bot.send_message(chat_id=user_id, text="Узнать статистику по предприятиям.", reply_markup=markup_get_company_stats)
+            await bot.send_message(chat_id=user_id, text="Общая выгрузка данных.\n\nПользователи, предприятия, кто заблокировал бота, кто был удален, собранная информация по пользователям.", reply_markup=markup_get_total_excel)
+            await bot.send_message(chat_id=user_id, text="Изменить информацию по пользователю (предприятие) или удалить его.", reply_markup=markup_change_user_data)
+            await bot.send_message(chat_id=user_id, text="Добавить волонтера", reply_markup=markup_add_volunteer)
+            await bot.send_message(
+                chat_id=user_id,
+                text="🔧 Режим разработчика: АДМИН\nНажмите для переключения в режим пользователя:",
+                reply_markup=markup_switch_to_user
+            )
+            await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_menu)
+        else:
+            await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
+
 
 @bot.my_chat_member_handler(func=lambda member: member.new_chat_member.status == 'kicked' and member.chat.type == 'private')
 async def bot_blocked(mb):
