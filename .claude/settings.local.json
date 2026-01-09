@@ -3,7 +3,8 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(if not exist \"F:\\cursor\\lgzt_registry\\plans\" mkdir \"F:\\cursor\\lgzt_registry\\plans\")"
     ],
     "deny": [],
     "ask": []
