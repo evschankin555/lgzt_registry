@@ -20,9 +20,11 @@ def load_users_from_excel(excel_path, sqlite_url: str = "sqlite:///app.db"):
     # Ensure tables exist
     Base.metadata.create_all(engine)
 
-    df = pd.read_excel(excel_path, usecols=[0,1,2,3,4,5])
+    # Read Excel file - headers are in row 1 (index 1), skip row 0
+    df = pd.read_excel(excel_path, usecols=[0,1,2,3,4,5], header=1)
 
-    print(df.columns)
+    print(f"Columns: {df.columns.tolist()}")
+    print(f"Total rows: {len(df)}")
 
     # Clean and convert the date column
     df["Дата рождения"] = pd.to_datetime(df["Дата рождения"], errors="coerce").dt.date
@@ -47,12 +49,14 @@ def load_users_from_excel(excel_path, sqlite_url: str = "sqlite:///app.db"):
                 # Update base fields; skip address/phone since users supply them later
                 existing.first_name = cleaned["Имя"]
                 existing.last_name = cleaned["Фамилия"]
+                existing.father_name = cleaned.get("Отчество")
                 existing.date_of_birth = cleaned["Дата рождения"]
                 existing.counter = cleaned["№ п/п"]
             else:
                 user = User(
                     first_name=cleaned["Имя"],
                     last_name=cleaned["Фамилия"],
+                    father_name=cleaned.get("Отчество"),
                     passport_number=cleaned["СЕРИЯ номер паспорта"],
                     date_of_birth=cleaned["Дата рождения"],
                     counter=cleaned["№ п/п"]
