@@ -15,6 +15,7 @@ from db import SessionLocal
 from models import User, Company
 from modules.auth import is_developer, get_developer_role
 from modules.error_handler import safe_edit_message, safe_send_message
+from modules.logger import log_company_change, log_user_delete
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,114 @@ async def get_stats() -> dict:
             'registered_week': registered_week,
             'total_registered': total_registered
         }
+
+
+async def get_detailed_stats() -> dict:
+    """
+    Получить детальную статистику для страницы статистики
+    """
+    async with SessionLocal() as session:
+        now = datetime.now(timezone.utc)
+
+        # Статистика по статусам
+        status_stats_result = await session.execute(
+            select(User.status, func.count(User.id))
+            .group_by(User.status)
+        )
+        status_stats = {row[0]: row[1] for row in status_stats_result.all()}
+
+        # Регистрации по периодам
+        registered_today_result = await session.execute(
+            select(func.count(User.id)).where(
+                User.status == 'registered',
+                User.registered_at >= now - timedelta(hours=24)
+            )
+        )
+        registered_today = registered_today_result.scalar() or 0
+
+        registered_week_result = await session.execute(
+            select(func.count(User.id)).where(
+                User.status == 'registered',
+                User.registered_at >= now - timedelta(days=7)
+            )
+        )
+        registered_week = registered_week_result.scalar() or 0
+
+        registered_month_result = await session.execute(
+            select(func.count(User.id)).where(
+                User.status == 'registered',
+                User.registered_at >= now - timedelta(days=30)
+            )
+        )
+        registered_month = registered_month_result.scalar() or 0
+
+        # Количество предприятий
+        total_companies_result = await session.execute(
+            select(func.count(Company.id))
+        )
+        total_companies = total_companies_result.scalar() or 0
+
+        # Топ-5 предприятий по количеству зарегистрированных
+        top_companies_result = await session.execute(
+            select(
+                Company.name,
+                func.count(User.id).label("count")
+            )
+            .join(User, User.company_id == Company.id)
+            .where(User.status == 'registered')
+            .group_by(Company.id, Company.name)
+            .order_by(func.count(User.id).desc())
+            .limit(5)
+        )
+        top_companies = [(row[0], row[1]) for row in top_companies_result.all()]
+
+        return {
+            'registered': status_stats.get('registered', 0),
+            'not_registered': status_stats.get('not registered', 0),
+            'blocked': status_stats.get('blocked', 0),
+            'deleted': status_stats.get('deleted', 0),
+            'registered_today': registered_today,
+            'registered_week': registered_week,
+            'registered_month': registered_month,
+            'total_companies': total_companies,
+            'top_companies': top_companies
+        }
+
+
+async def show_detailed_stats(bot: AsyncTeleBot, chat_id: int, message_id: int):
+    """
+    Показать детальную статистику
+    """
+    stats = await get_detailed_stats()
+
+    total_users = stats['registered'] + stats['not_registered'] + stats['blocked'] + stats['deleted']
+
+    text = (
+        "📊 <b>Детальная статистика</b>\n\n"
+        "<b>👥 Пользователи по статусам:</b>\n"
+        f"• 🟢 Зарегистрировано: {stats['registered']}\n"
+        f"• 🟡 Не зарегистрировано: {stats['not_registered']}\n"
+        f"• 🔴 Заблокировано: {stats['blocked']}\n"
+        f"• ⚫ Удалено: {stats['deleted']}\n"
+        f"• Всего в базе: {total_users}\n\n"
+        "<b>📅 Регистрации по периодам:</b>\n"
+        f"• За 24 часа: {stats['registered_today']}\n"
+        f"• За 7 дней: {stats['registered_week']}\n"
+        f"• За 30 дней: {stats['registered_month']}\n\n"
+        f"<b>🏭 Предприятий:</b> {stats['total_companies']}\n\n"
+    )
+
+    if stats['top_companies']:
+        text += "<b>🏆 Топ-5 предприятий:</b>\n"
+        for i, (name, count) in enumerate(stats['top_companies'], 1):
+            # Обрезаем длинные названия
+            display_name = name[:25] + "..." if len(name) > 25 else name
+            text += f"{i}. {display_name}: {count}\n"
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("↩️ В меню", callback_data="admin_menu"))
+
+    await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
 
 
 def build_admin_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -696,7 +805,6 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
         pattern_upper = f"%{query_text.upper()}%"
         pattern_capitalize = f"%{query_text.capitalize()}%"
 
-        logger.info(f"Search query: '{query}', patterns: original='{pattern_original}', lower='{pattern_lower}', capitalize='{pattern_capitalize}'")
 
         # Базовые условия поиска - ищем по всем вариантам регистра
         search_conditions = (
@@ -726,7 +834,6 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
         )
         total = count_result.scalar() or 0
 
-        logger.info(f"Search found {total} results for '{query}'")
 
         # Получаем пользователей с пагинацией
         stmt = (
@@ -741,7 +848,6 @@ async def search_users_page(query: str, page: int = 0) -> Tuple[List[dict], int]
         result = await session.execute(stmt)
         users = result.scalars().all()
 
-        logger.info(f"Search returned {len(users)} users on page {page}")
 
         users_list = [
             {
@@ -945,25 +1051,39 @@ async def show_company_select(bot: AsyncTeleBot, chat_id: int, message_id: int, 
     await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
 
 
-async def change_user_company(user_id: int, new_company_id: int) -> bool:
+async def change_user_company(user_id: int, new_company_id: int) -> Optional[Tuple[str, str]]:
     """
     Изменить предприятие пользователя
 
     Returns:
-        True если успешно
+        Tuple[old_company_name, new_company_name] если успешно, None если ошибка
     """
     async with SessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.id == user_id)
+            select(User)
+            .options(selectinload(User.company))
+            .where(User.id == user_id)
         )
         user = result.scalar_one_or_none()
 
         if not user:
-            return False
+            return None
+
+        old_company_name = user.company.name if user.company else "Не назначено"
+
+        # Получаем новую компанию
+        new_company_result = await session.execute(
+            select(Company).where(Company.id == new_company_id)
+        )
+        new_company = new_company_result.scalar_one_or_none()
+
+        if not new_company:
+            return None
 
         user.company_id = new_company_id
         await session.commit()
-        return True
+
+        return (old_company_name, new_company.name)
 
 
 # ===== УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ =====
@@ -1007,12 +1127,12 @@ async def show_delete_confirm(bot: AsyncTeleBot, chat_id: int, message_id: int, 
     await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
 
 
-async def delete_user(user_id: int) -> bool:
+async def delete_user(user_id: int) -> Optional[str]:
     """
     Удалить пользователя (установить статус deleted)
 
     Returns:
-        True если успешно
+        ФИО пользователя если успешно, None если ошибка
     """
     async with SessionLocal() as session:
         result = await session.execute(
@@ -1021,12 +1141,17 @@ async def delete_user(user_id: int) -> bool:
         user = result.scalar_one_or_none()
 
         if not user:
-            return False
+            return None
+
+        user_name = f"{user.last_name} {user.first_name}"
+        if user.father_name:
+            user_name += f" {user.father_name}"
 
         user.status = 'deleted'
         user.tg_id = None  # Отвязываем Telegram
         await session.commit()
-        return True
+
+        return user_name
 
 
 async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
@@ -1046,6 +1171,11 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
         # Главное меню админа
         if data == "admin_menu":
             await show_admin_menu(bot, chat_id, user_id, message_id)
+            await bot.answer_callback_query(call.id)
+
+        # Детальная статистика
+        elif data == "admin_stats_detail":
+            await show_detailed_stats(bot, chat_id, message_id)
             await bot.answer_callback_query(call.id)
 
         # Список предприятий
@@ -1131,8 +1261,11 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
             parts = data.split("_")
             user_db_id = int(parts[2])
             company_id = int(parts[3])
-            success = await change_user_company(user_db_id, company_id)
-            if success:
+            result = await change_user_company(user_db_id, company_id)
+            if result:
+                old_company, new_company = result
+                # Логируем действие
+                log_company_change(user_id, user_db_id, old_company, new_company)
                 await bot.answer_callback_query(call.id, "✅ Предприятие изменено")
                 await show_user_card(bot, chat_id, message_id, user_db_id)
             else:
@@ -1147,8 +1280,10 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
         # Подтверждение удаления
         elif data.startswith("confirm_delete_"):
             user_db_id = int(data.split("_")[2])
-            success = await delete_user(user_db_id)
-            if success:
+            user_name = await delete_user(user_db_id)
+            if user_name:
+                # Логируем действие
+                log_user_delete(user_id, user_db_id, user_name)
                 await bot.answer_callback_query(call.id, "✅ Пользователь удален")
                 await show_user_card(bot, chat_id, message_id, user_db_id)
             else:
