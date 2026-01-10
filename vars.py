@@ -43,6 +43,7 @@ class MyStates(StatesGroup):
     admin_search = State()  # Ожидание поискового запроса
     admin_edit_user_company = State()  # Ожидание ID нового предприятия
     admin_edit_volunteer_name = State()  # Ожидание имени волонтера
+    admin_add_volunteer_name = State()  # Ожидание имени при добавлении волонтера
 
 
 markup_agree_to_nda = types.InlineKeyboardMarkup()

@@ -432,8 +432,30 @@ async def admin_read_volunteer_id(msg):
         await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
         return
 
+    # Проверяем что ID похож на реальный Telegram ID (минимум 6 цифр)
+    if user_tg_id < 100000:
+        text = format_error_message(
+            "Неверный Telegram ID",
+            "Telegram ID должен содержать минимум 6 цифр.",
+            "Проверьте ID и попробуйте снова"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+        return
+
+    # Пробуем получить имя пользователя через Telegram API
+    volunteer_name = None
+    try:
+        chat_info = await bot.get_chat(user_tg_id)
+        if chat_info.first_name:
+            volunteer_name = chat_info.first_name
+            if chat_info.last_name:
+                volunteer_name += f" {chat_info.last_name}"
+    except Exception as e:
+        print(f"Could not get chat info for {user_tg_id}: {e}")
+        # Если не удалось получить - оставляем None
+
     admin_id = msg.from_user.id
-    success = await add_volunteer(user_tg_id, added_by=admin_id)
+    success = await add_volunteer(user_tg_id, added_by=admin_id, name=volunteer_name)
     await show_volunteer_added(bot, msg.chat.id, user_tg_id, success)
     await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
 
