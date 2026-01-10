@@ -8,7 +8,7 @@ from modules.auth import (
 from modules.logger import log_role_switch, setup_logging
 from modules.admin_ui import (
     show_admin_menu, show_companies_list, handle_admin_callback,
-    show_search_results
+    show_search_results, show_volunteer_added
 )
 from modules.user_ui import (
     format_step_message, format_success_message, format_error_message,
@@ -422,20 +422,16 @@ async def admin_read_volunteer_id(msg):
     try:
         user_tg_id = int(msg.text.strip())
     except:
-
-        await bot.send_message(chat_id=msg.chat.id, text="Неправильный ID")
+        text = format_error_message(
+            "Неверный формат",
+            "Telegram ID должен быть числом.",
+            "Попробуйте еще раз или нажмите Назад"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
         return
 
-    print('before adding volunteer')
-    if await add_volunteer(user_tg_id):
-
-        print('outside adding volunteer')
-
-        await bot.send_message(chat_id=msg.chat.id, text="Волонтер добавлен.")
-
-    else:
-        await bot.send_message(chat_id=msg.chat.id, text="Волонтер с таким айди уже существует.")
-
+    success = await add_volunteer(user_tg_id)
+    await show_volunteer_added(bot, msg.chat.id, user_tg_id, success)
     await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
 
 
@@ -467,7 +463,7 @@ async def callback(call):
 
     # Сначала пробуем обработать через admin_ui
     admin_ui_callbacks = [
-        'admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users', 'admin_search', 'noop'
+        'admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users', 'admin_search', 'admin_add_volunteer', 'noop'
     ]
     admin_ui_prefixes = [
         'companies_page_', 'company_', 'comp_users_',
@@ -488,6 +484,8 @@ async def callback(call):
                     search_query = data.get('search_query', '')
                 if search_query:
                     await show_search_results(bot, call.message.chat.id, search_query, result.get("page", 0), call.message.message_id)
+            elif result.get("action") == "set_volunteer_state":
+                await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_read_volunteer_id)
         return
 
     if call.data == 'get_total_excel':
@@ -573,13 +571,6 @@ async def callback(call):
 
         await bot.set_state(chat_id=user_id, user_id=user_id, state=MyStates.admin_read_comp_id_for_edit)
 
-
-    elif call.data == 'add_volunteer':
-
-        await bot.send_message(chat_id=user_id,
-                               text=f"Пришли мне ID волонтера в телеграме.")
-
-        await bot.set_state(chat_id=user_id, user_id=user_id, state=MyStates.admin_read_volunteer_id)
 
     # Обработка переключения режимов для developer (в состоянии admin_menu)
     elif call.data == 'switch_to_user':

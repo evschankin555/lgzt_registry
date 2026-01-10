@@ -222,12 +222,7 @@ def build_admin_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     )
 
     keyboard.add(
-        InlineKeyboardButton("🔍 Поиск", callback_data="admin_search")
-    )
-
-    keyboard.add(
-        InlineKeyboardButton("✏️ Изменить пользователя", callback_data="change_user_data"),
-        InlineKeyboardButton("➕ Добавить волонтера", callback_data="add_volunteer")
+        InlineKeyboardButton("➕ Добавить волонтера", callback_data="admin_add_volunteer")
     )
 
     # Кнопка переключения режима только для developer
@@ -929,6 +924,48 @@ async def show_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Option
         await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
 
 
+async def show_add_volunteer_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int] = None):
+    """
+    Показать форму добавления волонтера
+    """
+    text = (
+        "➕ <b>Добавление волонтера</b>\n\n"
+        "Чтобы добавить волонтера, отправьте его Telegram ID.\n\n"
+        "💡 <i>Telegram ID можно узнать у @userinfobot или попросить пользователя переслать сообщение от этого бота</i>"
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("↩️ Назад", callback_data="admin_menu"))
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+async def show_volunteer_added(bot: AsyncTeleBot, chat_id: int, volunteer_tg_id: int, success: bool):
+    """
+    Показать результат добавления волонтера
+    """
+    if success:
+        text = (
+            f"✅ <b>Волонтер добавлен</b>\n\n"
+            f"Telegram ID: <code>{volunteer_tg_id}</code>\n\n"
+            f"Теперь этот пользователь может регистрировать людей."
+        )
+    else:
+        text = (
+            f"⚠️ <b>Волонтер уже существует</b>\n\n"
+            f"Telegram ID: <code>{volunteer_tg_id}</code>\n\n"
+            f"Этот пользователь уже является волонтером."
+        )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("↩️ В меню", callback_data="admin_menu"))
+
+    await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
 async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, page: int = 0, message_id: Optional[int] = None) -> bool:
     """
     Показать результаты поиска с пагинацией
@@ -1288,6 +1325,12 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
                 await show_user_card(bot, chat_id, message_id, user_db_id)
             else:
                 await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
+
+        # Добавление волонтера - показать форму
+        elif data == "admin_add_volunteer":
+            await show_add_volunteer_prompt(bot, chat_id, message_id)
+            await bot.answer_callback_query(call.id)
+            return {"action": "set_volunteer_state"}
 
         # Заглушка для noop
         elif data == "noop":
