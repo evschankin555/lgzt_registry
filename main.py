@@ -9,7 +9,7 @@ from modules.logger import log_role_switch, setup_logging
 from modules.admin_ui import (
     show_admin_menu, show_companies_list, handle_admin_callback,
     show_search_results, show_volunteer_added, show_edit_volunteer_name_prompt,
-    update_volunteer_name, show_volunteer_card
+    update_volunteer_name, show_volunteer_card, show_company_search_results
 )
 from modules.user_ui import (
     format_step_message, format_success_message, format_error_message,
@@ -499,7 +499,7 @@ async def admin_edit_volunteer_name(msg):
 
 @bot.message_handler(content_types='text', state=[MyStates.admin_search])
 async def admin_handle_search(msg):
-    """Обработка поискового запроса"""
+    """Обработка поискового запроса пользователей"""
     query = msg.text.strip()
 
     if not query:
@@ -518,6 +518,27 @@ async def admin_handle_search(msg):
     # Если не найдено - остаемся в режиме поиска (admin_search state)
 
 
+@bot.message_handler(content_types='text', state=[MyStates.admin_search_companies])
+async def admin_handle_company_search(msg):
+    """Обработка поискового запроса предприятий"""
+    query = msg.text.strip()
+
+    if not query:
+        await bot.send_message(chat_id=msg.chat.id, text="Введите текст для поиска")
+        return
+
+    # Сохраняем поисковый запрос для пагинации
+    async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
+        data['company_search_query'] = query
+
+    found = await show_company_search_results(bot, msg.chat.id, query, page=0)
+
+    if found:
+        # Найдено - выходим из режима поиска
+        await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
+    # Если не найдено - остаемся в режиме поиска
+
+
 # Обработчик callback для админ-состояний
 # Включает состояния, где пользователь может нажать "Назад" или другие кнопки
 @bot.callback_query_handler(func=lambda call: True, state=[
@@ -526,6 +547,7 @@ async def admin_handle_search(msg):
     MyStates.admin_read_comp_id_for_edit,  # Для обработки кнопки "Отмена" при изменении предприятия
     MyStates.admin_read_volunteer_id,  # Для обработки кнопки "Назад" при добавлении волонтера
     MyStates.admin_search,
+    MyStates.admin_search_companies,  # Для обработки кнопки "Назад" при поиске предприятий
     MyStates.admin_edit_volunteer_name
 ])
 async def callback(call):
@@ -535,13 +557,13 @@ async def callback(call):
     # Сначала пробуем обработать через admin_ui
     admin_ui_callbacks = [
         'admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users',
-        'admin_search', 'admin_add_volunteer', 'admin_volunteers', 'noop'
+        'admin_search', 'admin_search_companies', 'admin_add_volunteer', 'admin_volunteers', 'noop'
     ]
     admin_ui_prefixes = [
         'companies_page_', 'company_', 'comp_users_',
         'users_page_', 'users_filter_', 'user_',
         'edit_user_company_', 'sel_comp_page_', 'set_company_',
-        'delete_user_', 'confirm_delete_', 'search_page_',
+        'delete_user_', 'confirm_delete_', 'search_page_', 'search_comp_page_',
         'volunteers_page_', 'volunteer_', 'delete_volunteer_',
         'confirm_del_volunteer_', 'edit_volunteer_name_'
     ]
@@ -561,6 +583,14 @@ async def callback(call):
                     search_query = data.get('search_query', '')
                 if search_query:
                     await show_search_results(bot, call.message.chat.id, search_query, result.get("page", 0), call.message.message_id)
+            elif action == "set_company_search_state":
+                await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_search_companies)
+            elif action == "company_search_paginate":
+                # Получаем сохраненный поисковый запрос предприятий и показываем нужную страницу
+                async with bot.retrieve_data(user_id, call.message.chat.id) as data:
+                    search_query = data.get('company_search_query', '')
+                if search_query:
+                    await show_company_search_results(bot, call.message.chat.id, search_query, result.get("page", 0), call.message.message_id)
             elif action == "set_volunteer_state":
                 await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_read_volunteer_id)
             elif action == "set_edit_volunteer_name":

@@ -40,7 +40,8 @@ class MyStates(StatesGroup):
     admin_read_comp_id_for_edit = State()
     admin_read_volunteer_id = State()
     # Новые состояния для админ-панели
-    admin_search = State()  # Ожидание поискового запроса
+    admin_search = State()  # Ожидание поискового запроса пользователей
+    admin_search_companies = State()  # Ожидание поискового запроса предприятий
     admin_edit_user_company = State()  # Ожидание ID нового предприятия
     admin_edit_volunteer_name = State()  # Ожидание имени волонтера
     admin_add_volunteer_name = State()  # Ожидание имени при добавлении волонтера

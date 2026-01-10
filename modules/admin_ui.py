@@ -350,7 +350,7 @@ def build_companies_list_keyboard(companies: List[dict], page: int, total: int) 
 
     # Навигация
     keyboard.add(
-        InlineKeyboardButton("🔍 Поиск", callback_data="admin_search"),
+        InlineKeyboardButton("🔍 Поиск", callback_data="admin_search_companies"),
         InlineKeyboardButton("↩️ В меню", callback_data="admin_menu")
     )
 
@@ -922,6 +922,161 @@ async def show_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Option
         await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
     else:
         await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+# ===== ПОИСК ПРЕДПРИЯТИЙ =====
+
+async def show_company_search_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int] = None):
+    """
+    Показать приглашение к поиску предприятий
+    """
+    text = (
+        "🔍 <b>Поиск предприятия</b>\n\n"
+        "Введите для поиска:\n"
+        "• Часть названия предприятия\n"
+        "• ID предприятия\n\n"
+        "Отправьте текст сообщением:"
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🏭 К предприятиям", callback_data="admin_companies"))
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+async def search_companies_page(query: str, page: int = 0) -> Tuple[List[dict], int]:
+    """
+    Поиск предприятий по названию или ID с пагинацией
+    """
+    async with SessionLocal() as session:
+        query_text = query.strip()
+        pattern = f"%{query_text}%"
+
+        # Условия поиска по названию (регистронезависимо)
+        search_conditions = (
+            (Company.name.like(pattern)) |
+            (Company.name.like(f"%{query_text.lower()}%")) |
+            (Company.name.like(f"%{query_text.upper()}%")) |
+            (Company.name.like(f"%{query_text.capitalize()}%"))
+        )
+
+        # Если это число - добавляем поиск по ID
+        if query_text.isdigit():
+            company_id = int(query_text)
+            search_conditions = search_conditions | (Company.id == company_id)
+
+        # Общее количество
+        count_result = await session.execute(
+            select(func.count(Company.id)).where(search_conditions)
+        )
+        total = count_result.scalar() or 0
+
+        # Получаем предприятия с количеством пользователей
+        stmt = (
+            select(
+                Company.id,
+                Company.name,
+                func.count(User.id).label("user_count")
+            )
+            .outerjoin(User, User.company_id == Company.id)
+            .where(search_conditions)
+            .group_by(Company.id, Company.name)
+            .order_by(Company.id)
+            .offset(page * ITEMS_PER_PAGE)
+            .limit(ITEMS_PER_PAGE)
+        )
+
+        result = await session.execute(stmt)
+        rows = result.all()
+
+        companies = [
+            {'id': row[0], 'name': row[1], 'user_count': row[2]}
+            for row in rows
+        ]
+
+        return companies, total
+
+
+def build_company_search_results_keyboard(companies: List[dict], query: str, page: int, total: int) -> InlineKeyboardMarkup:
+    """
+    Построить клавиатуру результатов поиска предприятий
+    """
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
+    for company in companies:
+        btn_text = f"🏭 {company['id']}. {company['name']} ({company['user_count']} чел.)"
+        if len(btn_text) > 60:
+            btn_text = btn_text[:57] + "..."
+        keyboard.add(
+            InlineKeyboardButton(btn_text, callback_data=f"company_{company['id']}")
+        )
+
+    # Пагинация
+    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    if total_pages > 1:
+        nav_buttons = []
+
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton("◀️", callback_data=f"search_comp_page_{page - 1}")
+            )
+
+        nav_buttons.append(
+            InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")
+        )
+
+        if page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton("▶️", callback_data=f"search_comp_page_{page + 1}")
+            )
+
+        keyboard.row(*nav_buttons)
+
+    keyboard.add(
+        InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search_companies"),
+        InlineKeyboardButton("🏭 К предприятиям", callback_data="admin_companies")
+    )
+
+    return keyboard
+
+
+async def show_company_search_results(bot: AsyncTeleBot, chat_id: int, query: str, page: int = 0, message_id: Optional[int] = None) -> bool:
+    """
+    Показать результаты поиска предприятий
+
+    Returns:
+        True если найдены результаты, False если не найдено
+    """
+    companies, total = await search_companies_page(query, page)
+
+    if not companies:
+        text = (
+            f"🔍 <b>Поиск предприятия: {query}</b>\n\n"
+            f"❌ Ничего не найдено\n\n"
+            f"Введите другой запрос или нажмите кнопку ниже:"
+        )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🏭 К предприятиям", callback_data="admin_companies"))
+
+        if message_id:
+            await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        else:
+            await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+        return False
+    else:
+        text = f"🔍 <b>Поиск предприятия: {query}</b>\n\nНайдено: {total}\n\nВыберите предприятие:"
+        keyboard = build_company_search_results_keyboard(companies, query, page, total)
+
+        if message_id:
+            await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        else:
+            await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+        return True
 
 
 async def show_add_volunteer_prompt(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int] = None):
@@ -1570,6 +1725,18 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
             await bot.answer_callback_query(call.id)
             # Возвращаем запрос на пагинацию поиска
             return {"action": "search_paginate", "page": page}
+
+        # Поиск предприятий - показать приглашение
+        elif data == "admin_search_companies":
+            await show_company_search_prompt(bot, chat_id, message_id)
+            await bot.answer_callback_query(call.id)
+            return {"action": "set_company_search_state"}
+
+        # Пагинация результатов поиска предприятий
+        elif data.startswith("search_comp_page_"):
+            page = int(data.split("_")[3])
+            await bot.answer_callback_query(call.id)
+            return {"action": "company_search_paginate", "page": page}
 
         # Изменение предприятия - показать выбор
         elif data.startswith("edit_user_company_"):
