@@ -166,6 +166,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         if code != 0:
                             raise Exception(f"Git pull failed: {error}")
                         
+                        # Исправление прав на .git директорию (критично для работы git fetch)
+                        logger.info("Исправление прав на .git директорию...")
+                        run_command('chown -R www-data:www-data .git')
+                        run_command('chmod -R u+w .git')
+                        
                         # Обновление прав на файлы (кроме .git директории)
                         logger.info("Обновление прав на файлы...")
                         run_command('find . -path ./.git -prune -o -exec chown www-data:www-data {} +')
