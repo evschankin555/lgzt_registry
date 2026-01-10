@@ -1500,6 +1500,7 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
         if data == "admin_menu":
             await show_admin_menu(bot, chat_id, user_id, message_id)
             await bot.answer_callback_query(call.id)
+            return {"action": "set_admin_menu_state"}
 
         # Детальная статистика
         elif data == "admin_stats_detail":

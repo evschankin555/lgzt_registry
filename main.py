@@ -541,17 +541,20 @@ async def callback(call):
         result = await handle_admin_callback(call, bot)
         # Обработка специальных действий
         if isinstance(result, dict):
-            if result.get("action") == "set_search_state":
+            action = result.get("action")
+            if action == "set_admin_menu_state":
+                await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_menu)
+            elif action == "set_search_state":
                 await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_search)
-            elif result.get("action") == "search_paginate":
+            elif action == "search_paginate":
                 # Получаем сохраненный поисковый запрос и показываем нужную страницу
                 async with bot.retrieve_data(user_id, call.message.chat.id) as data:
                     search_query = data.get('search_query', '')
                 if search_query:
                     await show_search_results(bot, call.message.chat.id, search_query, result.get("page", 0), call.message.message_id)
-            elif result.get("action") == "set_volunteer_state":
+            elif action == "set_volunteer_state":
                 await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_read_volunteer_id)
-            elif result.get("action") == "set_edit_volunteer_name":
+            elif action == "set_edit_volunteer_name":
                 volunteer_id = result.get("volunteer_id")
                 async with bot.retrieve_data(user_id, call.message.chat.id) as data:
                     data['edit_volunteer_id'] = volunteer_id
