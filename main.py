@@ -10,6 +10,11 @@ from modules.admin_ui import (
     show_admin_menu, show_companies_list, handle_admin_callback,
     show_search_results
 )
+from modules.user_ui import (
+    format_step_message, format_success_message, format_error_message,
+    format_user_profile, get_user_profile_data, get_profile_keyboard,
+    show_company_selection, get_step_text
+)
 
 # Настройка логирования
 setup_logging()
@@ -55,13 +60,19 @@ async def start_signup(msg):
     user_id_in_db = await find_user_by_tg_id(user_tg_id)
 
     if user_id_in_db and await is_volunteer(user_tg_id) is False:
-        await bot.send_message(chat_id=msg.chat.id, text="Вы уже зарегистрированы")
+        text = format_error_message(
+            "Вы уже зарегистрированы",
+            "Ваш профиль уже существует в системе."
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
     else:
-        await bot.send_message(chat_id=msg.chat.id, text=surname_check_text)
+        # Шаг 1: Фамилия
+        text = get_step_text(1)
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
         await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.handle_surname)
 
-@bot.message_handler(content_types='text', regexp='Профиль')
+@bot.message_handler(content_types='text', regexp='Мой профиль')
 async def show_profile(msg):
 
     user_tg_id = int(msg.from_user.id)
@@ -69,13 +80,27 @@ async def show_profile(msg):
     user_id_in_db = await find_user_by_tg_id(user_tg_id)
 
     if user_id_in_db:
-
-        user_info = await prepare_user_info(user_id_in_db)
-
-        await bot.send_message(chat_id=msg.chat.id, text=user_info, reply_markup=markup_default)
+        # Получаем данные и форматируем красивую карточку
+        user_data = await get_user_profile_data(user_id_in_db)
+        if user_data:
+            profile_text = format_user_profile(user_data)
+            markup = get_profile_keyboard()
+            await bot.send_message(
+                chat_id=msg.chat.id,
+                text=profile_text,
+                parse_mode='HTML',
+                reply_markup=markup
+            )
+        else:
+            text = format_error_message("Ошибка", "Не удалось загрузить профиль.")
+            await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
     else:
-
-        await bot.send_message(chat_id=msg.chat.id, text="Вы еще не зарегистрировались, поэтому пока что у вас нет профиля.", reply_markup=markup_default)
+        text = format_error_message(
+            "Профиль не найден",
+            "Вы еще не зарегистрировались в системе.",
+            "Нажмите кнопку «Регистрация» чтобы начать"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML', reply_markup=markup_default)
 
 
 
@@ -85,21 +110,23 @@ async def handle_surname(msg):
     surname = msg.text.strip().capitalize()
 
     if await check_surname(surname):
-        print('user found')
-
-        await bot.send_message(chat_id=msg.chat.id, text="Пришлите вашу дату рождения в формате - 01.01.2000 (пример)")
+        # Шаг 2: Дата рождения
+        text = get_step_text(2)
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
         async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
-
             data['surname'] = surname
             data['user_tg_id'] = msg.from_user.id
-
 
         await bot.set_state(chat_id=msg.chat.id, user_id=msg.chat.id, state=MyStates.handle_dob)
 
     else:
-
-        await bot.send_message(chat_id=msg.chat.id, text="Не вижу вашу фамилию в базе.")
+        text = format_error_message(
+            "Фамилия не найдена",
+            "Не вижу вашу фамилию в базе данных.",
+            "Проверьте правильность написания и попробуйте снова"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
 @bot.message_handler(content_types='text', state=[MyStates.handle_dob])
 async def handle_dob(msg):
@@ -108,70 +135,87 @@ async def handle_dob(msg):
         dob = datetime.strptime(msg.text, "%d.%m.%Y").date()
 
         async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
-
             data['dob'] = dob
             surname = data.get('surname')
-
 
         user = await check_dob_and_status(dob, surname)
 
         if user:
-
             # user exists in the db
-
             if user.status != 'registered':
-
-                await bot.send_message(chat_id=msg.chat.id, text="Нашел в базе, вы еще не зарегистрированы.")
-
                 async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
-
                     data['id'] = user.id
 
-                # ask for name and father name
-                await bot.send_message(chat_id=msg.chat.id, text=f"Пришлите имя и отчество")
+                # Шаг 3: Имя и отчество
+                text = get_step_text(3)
+                await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
                 await bot.set_state(chat_id=msg.chat.id, user_id=msg.chat.id, state=MyStates.handle_names)
 
             else:
-
-                await bot.send_message(chat_id=msg.chat.id, text=f"Вы уже зарегистрированы в системе.")
+                text = format_error_message(
+                    "Уже зарегистрированы",
+                    "Вы уже зарегистрированы в системе."
+                )
+                await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
                 await bot.delete_state(user_id=msg.from_user.id, chat_id=msg.chat.id)
 
         else:
-            await bot.send_message(chat_id=msg.chat.id, text="Не нашел пользователя")
+            text = format_error_message(
+                "Пользователь не найден",
+                "Не нашел пользователя с такой датой рождения.",
+                "Проверьте данные и попробуйте снова"
+            )
+            await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
     except:
-
-        await bot.send_message(chat_id=msg.chat.id, text="Неправильный формат даты рождения.")
+        text = format_error_message(
+            "Неверный формат",
+            "Неправильный формат даты рождения.",
+            "Используйте формат: 01.01.2000"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
 
 @bot.message_handler(content_types='text', state=[MyStates.handle_names])
 async def handle_names(msg):
 
     user_string = msg.text
-
     user_str_to_list = user_string.split()
 
     if len(user_str_to_list) < 2:
-        await bot.send_message(chat_id=msg.chat.id,
-                               text="Имя и отчество должны состоять как минимум из 2 слов.")
+        text = format_error_message(
+            "Недостаточно данных",
+            "Имя и отчество должны состоять как минимум из 2 слов.",
+            "Например: Иван Иванович"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
     else:
-
         name, father_name = await extract_name_father_name(user_str_to_list)
 
         async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
-
             data['name'] = name
             data['father_name'] = father_name
 
-        await bot.send_message(chat_id=msg.chat.id,
-                               text="Хорошо. Пришлите свой номер телефона, без знака плюс, без пробелов, начиная с 7, например, 79275550150. На него прийдет СМС с кодом, нужно ввести его сюда.")
+        # Шаг 4: Номер телефона
+        text = get_step_text(4)
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
         await bot.set_state(chat_id=msg.chat.id, user_id=msg.chat.id, state=MyStates.handle_phone_number)
 
 
 @bot.message_handler(content_types='text', state=[MyStates.handle_phone_number])
 async def handle_phone_number(msg):
 
-    phone_number = msg.text
+    phone_number = msg.text.strip()
+
+    # Проверка формата номера
+    if not phone_number.isdigit() or len(phone_number) != 11 or not phone_number.startswith('7'):
+        text = format_error_message(
+            "Неверный формат",
+            "Номер телефона должен состоять из 11 цифр и начинаться с 7.",
+            "Например: 79271234567"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+        return
 
     async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
         data['phone_number'] = phone_number
@@ -180,12 +224,11 @@ async def handle_phone_number(msg):
     code = await send_code(phone_number)
 
     async with bot.retrieve_data(user_id=msg.from_user.id, chat_id=msg.chat.id) as data:
-
         data['code'] = code
 
-
-    await bot.send_message(chat_id=msg.chat.id,
-                           text="Введите код из СМС")
+    # Шаг 5: Код подтверждения
+    text = get_step_text(5)
+    await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
     await bot.set_state(chat_id=msg.chat.id, user_id=msg.chat.id, state=MyStates.check_sms)
 
@@ -196,26 +239,23 @@ async def check_sms(msg):
 
     code_from_user = msg.text.strip()
 
-    print(f'code from user is {code_from_user}')
-
     async with bot.retrieve_data(user_id=msg.from_user.id, chat_id=msg.chat.id) as data:
-
         code_from_backend = data.get('code')
 
-
-    print(f'code from backend is {code_from_backend}')
-
-
     if code_from_user == code_from_backend:
-        await bot.send_message(chat_id=msg.chat.id,
-                               text="Введите свой адрес проживания в свободной форме.")
+        # Шаг 6: Адрес проживания
+        text = get_step_text(6)
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
         await bot.set_state(chat_id=msg.chat.id, user_id=msg.chat.id, state=MyStates.handle_home_address)
 
     else:
-
-        await bot.send_message(chat_id=msg.chat.id,
-                               text="Код неверный. Попробуйте снова.")
+        text = format_error_message(
+            "Неверный код",
+            "Код не совпадает. Попробуйте ввести еще раз.",
+            "Проверьте SMS и введите код повторно"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
 
 
 @bot.message_handler(content_types='text', state=[MyStates.handle_home_address])
@@ -224,12 +264,20 @@ async def handle_home_address(msg):
     home_address = msg.text.strip()
 
     async with bot.retrieve_data(user_id=msg.from_user.id, chat_id=msg.chat.id) as data:
-
         data['home_address'] = home_address
         id_from_db = data['id']
 
-    await bot.send_message(chat_id=msg.chat.id,
-                           text=f"ID - {id_from_db}\n\nОзнакомьтесь с информацией о неразглашении.", reply_markup=markup_agree_to_nda)
+    # Сообщение о NDA перед выбором предприятия
+    text = f"""📋 <b>Регистрация</b> • Шаг 6 из 7
+━━━━━━━━━━━●━━━
+
+📄 <b>Соглашение о неразглашении</b>
+
+Ваш ID: <code>{id_from_db}</code>
+
+Перед выбором предприятия ознакомьтесь с информацией о неразглашении и подтвердите согласие."""
+
+    await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML', reply_markup=markup_agree_to_nda)
 
 
 
@@ -584,21 +632,96 @@ async def callback(call):
 
     user_id = call.from_user.id
 
+    # Обработка выбора предприятия при регистрации (кнопки с пагинацией)
+    if call.data.startswith('reg_comp_page_'):
+        page = int(call.data.replace('reg_comp_page_', ''))
+        await show_company_selection(bot, call.message.chat.id, page, call.message.message_id)
+        await bot.answer_callback_query(call.id)
+        return
+
+    if call.data.startswith('reg_company_'):
+        company_id = int(call.data.replace('reg_company_', ''))
+
+        async with bot.retrieve_data(user_id=user_id, chat_id=call.message.chat.id) as data:
+            user_db_id = data.get('id')
+
+        if await assign_company(user_db_id, company_id):
+            async with bot.retrieve_data(user_id=user_id, chat_id=call.message.chat.id) as data:
+                if await register_user(data):
+                    # Удаляем сообщение с выбором
+                    try:
+                        await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+                    except:
+                        pass
+
+                    # Успешная регистрация
+                    success_text = format_success_message(
+                        "Регистрация завершена!",
+                        "Добро пожаловать в систему. Ваш профиль успешно создан."
+                    )
+                    await bot.send_message(chat_id=user_id, text=success_text, parse_mode='HTML')
+
+                    # Показываем профиль
+                    user_data = await get_user_profile_data(user_db_id)
+                    if user_data:
+                        profile_text = format_user_profile(user_data)
+                        await bot.send_message(chat_id=user_id, text=profile_text, parse_mode='HTML')
+
+                    # Кнопка исправления
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text="Если нужно исправить информацию, нажмите кнопку ниже.",
+                        reply_markup=markup_correct_info
+                    )
+
+                    if await is_volunteer(user_id):
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text='Для начала следующей регистрации нажмите кнопку "Регистрация".',
+                            reply_markup=markup_default_volunteer
+                        )
+
+                    await bot.delete_state(user_id=user_id, chat_id=call.message.chat.id)
+                else:
+                    text = format_error_message("Ошибка", "Регистрация не удалась.")
+                    await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+        else:
+            text = format_error_message("Ошибка", "Не удалось выбрать предприятие.")
+            await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+
+        await bot.answer_callback_query(call.id)
+        return
+
     if call.data == 'agreed_to_nda':
-        print('user agreed to nda')
-
-        companies_list = await get_company_list()
-
-        await bot.send_message(chat_id=user_id,
-                               text=f"Введите номер предприятия, за которым вы закреплены\n\n{companies_list}")
-
-        await bot.set_state(chat_id=user_id, user_id=user_id, state=MyStates.handle_company)
+        # Показываем выбор предприятия через кнопки
+        await show_company_selection(bot, user_id, page=0)
+        await bot.answer_callback_query(call.id)
 
 
-    elif call.data == 'correct_info':
+    elif call.data == 'profile_edit' or call.data == 'correct_info':
+        text = """✏️ <b>Изменение данных</b>
 
-        await bot.send_message(chat_id=user_id,
-                               text=f"Напишите, пожалуйста, что нужно исправить и как. Я перешлю ваше сообщение менеджеру.", reply_markup=markup_correct_info_cancel)
+Напишите, что нужно исправить и как.
+Я перешлю ваше сообщение менеджеру."""
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=text,
+            parse_mode='HTML',
+            reply_markup=markup_correct_info_cancel
+        )
+
+        # Сохраняем данные пользователя для запроса
+        user_id_in_db = await find_user_by_tg_id(user_id)
+        if user_id_in_db:
+            user_data = await get_user_profile_data(user_id_in_db)
+            if user_data:
+                async with bot.retrieve_data(user_id, call.message.chat.id) as data:
+                    data['id'] = user_data.get('id')
+                    data['name'] = user_data.get('first_name')
+                    data['surname'] = user_data.get('last_name')
+                    data['father_name'] = user_data.get('father_name')
+                    data['phone_number'] = user_data.get('phone_number')
 
         await bot.set_state(chat_id=user_id, user_id=user_id, state=MyStates.handle_info_correction)
 

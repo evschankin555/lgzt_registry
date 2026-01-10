@@ -6,7 +6,8 @@
       "Bash(git push:*)",
       "Bash(if not exist \"F:\\cursor\\lgzt_registry\\plans\" mkdir \"F:\\cursor\\lgzt_registry\\plans\")",
       "Bash(python -m py_compile:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(cd:*)"
     ],
     "deny": [],
     "ask": []
