@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
 from db import SessionLocal
-from models import User, Company
+from models import User, Company, User_volunteer
 from modules.auth import is_developer, get_developer_role
 from modules.error_handler import safe_edit_message, safe_send_message
 from modules.logger import log_company_change, log_user_delete
@@ -217,12 +217,12 @@ def build_admin_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     )
 
     keyboard.add(
-        InlineKeyboardButton("📊 Статистика", callback_data="admin_stats_detail"),
-        InlineKeyboardButton("📥 Выгрузка Excel", callback_data="get_total_excel")
+        InlineKeyboardButton("🙋 Волонтеры", callback_data="admin_volunteers"),
+        InlineKeyboardButton("📊 Статистика", callback_data="admin_stats_detail")
     )
 
     keyboard.add(
-        InlineKeyboardButton("➕ Добавить волонтера", callback_data="admin_add_volunteer")
+        InlineKeyboardButton("📥 Выгрузка Excel", callback_data="get_total_excel")
     )
 
     # Кнопка переключения режима только для developer
@@ -961,9 +961,300 @@ async def show_volunteer_added(bot: AsyncTeleBot, chat_id: int, volunteer_tg_id:
         )
 
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("↩️ В меню", callback_data="admin_menu"))
+    keyboard.add(InlineKeyboardButton("🙋 К волонтерам", callback_data="admin_volunteers"))
 
     await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+# ============ ВОЛОНТЕРЫ ============
+
+async def get_volunteers_page(page: int = 0) -> Tuple[List[dict], int]:
+    """
+    Получить страницу волонтеров
+
+    Args:
+        page: Номер страницы (с 0)
+
+    Returns:
+        Tuple[список волонтеров, общее количество]
+    """
+    async with SessionLocal() as session:
+        # Общее количество
+        total_result = await session.execute(select(func.count(User_volunteer.id)))
+        total = total_result.scalar() or 0
+
+        # Получаем волонтеров
+        stmt = (
+            select(User_volunteer)
+            .order_by(User_volunteer.id.desc())
+            .offset(page * ITEMS_PER_PAGE)
+            .limit(ITEMS_PER_PAGE)
+        )
+
+        result = await session.execute(stmt)
+        volunteers = result.scalars().all()
+
+        return [
+            {
+                'id': v.id,
+                'tg_id': v.tg_id,
+                'name': v.name,
+                'added_at': v.added_at,
+                'added_by': v.added_by
+            }
+            for v in volunteers
+        ], total
+
+
+async def get_volunteer_detail(volunteer_id: int) -> Optional[dict]:
+    """
+    Получить детали волонтера по ID
+
+    Args:
+        volunteer_id: ID волонтера в БД
+
+    Returns:
+        Словарь с данными или None
+    """
+    async with SessionLocal() as session:
+        volunteer = await session.get(User_volunteer, volunteer_id)
+
+        if not volunteer:
+            return None
+
+        return {
+            'id': volunteer.id,
+            'tg_id': volunteer.tg_id,
+            'name': volunteer.name,
+            'added_at': volunteer.added_at,
+            'added_by': volunteer.added_by
+        }
+
+
+async def delete_volunteer(volunteer_id: int) -> bool:
+    """
+    Удалить волонтера
+
+    Args:
+        volunteer_id: ID волонтера в БД
+
+    Returns:
+        True если удален успешно
+    """
+    async with SessionLocal() as session:
+        volunteer = await session.get(User_volunteer, volunteer_id)
+
+        if not volunteer:
+            return False
+
+        await session.delete(volunteer)
+        await session.commit()
+        return True
+
+
+def build_volunteers_list_keyboard(volunteers: List[dict], page: int, total: int) -> InlineKeyboardMarkup:
+    """
+    Построить клавиатуру списка волонтеров
+    """
+    keyboard = InlineKeyboardMarkup(row_width=1)
+
+    for v in volunteers:
+        name = v['name'] or f"ID: {v['tg_id']}"
+        btn_text = f"🙋 {name}"
+        if len(btn_text) > 50:
+            btn_text = btn_text[:47] + "..."
+        keyboard.add(
+            InlineKeyboardButton(btn_text, callback_data=f"volunteer_{v['id']}")
+        )
+
+    # Пагинация
+    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    if total_pages > 1:
+        nav_buttons = []
+
+        if page > 0:
+            nav_buttons.append(
+                InlineKeyboardButton("◀️", callback_data=f"volunteers_page_{page - 1}")
+            )
+
+        nav_buttons.append(
+            InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")
+        )
+
+        if page < total_pages - 1:
+            nav_buttons.append(
+                InlineKeyboardButton("▶️", callback_data=f"volunteers_page_{page + 1}")
+            )
+
+        keyboard.row(*nav_buttons)
+
+    # Кнопка добавления и назад
+    keyboard.add(InlineKeyboardButton("➕ Добавить волонтера", callback_data="admin_add_volunteer"))
+    keyboard.add(InlineKeyboardButton("↩️ Назад", callback_data="admin_menu"))
+
+    return keyboard
+
+
+async def show_volunteers_list(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int], page: int = 0):
+    """
+    Показать список волонтеров
+    """
+    volunteers, total = await get_volunteers_page(page)
+
+    text = f"🙋 <b>Волонтеры</b>\n\nВсего: {total}\n"
+
+    if not volunteers:
+        text += "\nСписок пуст. Добавьте волонтера кнопкой ниже."
+
+    keyboard = build_volunteers_list_keyboard(volunteers, page, total)
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+def format_volunteer_date(dt) -> str:
+    """Форматирование даты для карточки волонтера"""
+    if not dt:
+        return "Не указано"
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
+async def show_volunteer_card(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int], volunteer_id: int):
+    """
+    Показать карточку волонтера
+    """
+    volunteer = await get_volunteer_detail(volunteer_id)
+
+    if not volunteer:
+        text = "❌ Волонтер не найден"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("↩️ Назад", callback_data="admin_volunteers"))
+        if message_id:
+            await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        else:
+            await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+        return
+
+    name = volunteer['name'] or "Не указано"
+    added_at = format_volunteer_date(volunteer['added_at'])
+    added_by = volunteer['added_by'] or "Не указано"
+
+    text = (
+        f"🙋 <b>Волонтер #{volunteer['id']}</b>\n"
+        f"{'━' * 16}\n\n"
+        f"📱 <b>Telegram ID:</b> <code>{volunteer['tg_id']}</code>\n\n"
+        f"👤 <b>Имя:</b> {name}\n\n"
+        f"📆 <b>Добавлен:</b> {added_at}\n\n"
+        f"👮 <b>Кем:</b> {added_by}"
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("✏️ Изменить имя", callback_data=f"edit_volunteer_name_{volunteer['id']}")
+    )
+    keyboard.add(
+        InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_volunteer_{volunteer['id']}")
+    )
+    keyboard.add(
+        InlineKeyboardButton("↩️ Назад", callback_data="admin_volunteers")
+    )
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+async def show_delete_volunteer_confirm(bot: AsyncTeleBot, chat_id: int, message_id: int, volunteer_id: int):
+    """
+    Показать подтверждение удаления волонтера
+    """
+    volunteer = await get_volunteer_detail(volunteer_id)
+
+    if not volunteer:
+        text = "❌ Волонтер не найден"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("↩️ Назад", callback_data="admin_volunteers"))
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        return
+
+    name = volunteer['name'] or f"ID: {volunteer['tg_id']}"
+
+    text = (
+        f"🗑 <b>Удаление волонтера</b>\n\n"
+        f"Вы уверены, что хотите удалить волонтера?\n\n"
+        f"🙋 {name}\n"
+        f"📱 Telegram ID: <code>{volunteer['tg_id']}</code>\n\n"
+        f"⚠️ Это действие нельзя отменить."
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(
+        InlineKeyboardButton("✅ Да, удалить", callback_data=f"confirm_del_volunteer_{volunteer['id']}")
+    )
+    keyboard.add(
+        InlineKeyboardButton("❌ Отмена", callback_data=f"volunteer_{volunteer['id']}")
+    )
+
+    await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+
+
+async def show_edit_volunteer_name_prompt(bot: AsyncTeleBot, chat_id: int, volunteer_id: int, message_id: Optional[int] = None):
+    """
+    Показать приглашение для редактирования имени волонтера
+    """
+    volunteer = await get_volunteer_detail(volunteer_id)
+
+    if not volunteer:
+        text = "❌ Волонтер не найден"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("↩️ Назад", callback_data="admin_volunteers"))
+        if message_id:
+            await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+        else:
+            await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+        return
+
+    current_name = volunteer['name'] or "Не указано"
+
+    text = (
+        f"✏️ <b>Редактирование имени волонтера</b>\n\n"
+        f"Текущее имя: {current_name}\n"
+        f"📱 Telegram ID: <code>{volunteer['tg_id']}</code>\n\n"
+        f"Введите новое имя волонтера:"
+    )
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("❌ Отмена", callback_data=f"volunteer_{volunteer_id}"))
+
+    if message_id:
+        await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
+    else:
+        await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
+
+
+async def update_volunteer_name(volunteer_id: int, name: str) -> bool:
+    """
+    Обновить имя волонтера
+
+    Args:
+        volunteer_id: ID волонтера в БД
+        name: Новое имя
+
+    Returns:
+        True если успешно
+    """
+    async with SessionLocal() as session:
+        volunteer = await session.get(User_volunteer, volunteer_id)
+
+        if not volunteer:
+            return False
+
+        volunteer.name = name
+        await session.commit()
+        return True
 
 
 async def show_search_results(bot: AsyncTeleBot, chat_id: int, query: str, page: int = 0, message_id: Optional[int] = None) -> bool:
@@ -1331,6 +1622,45 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
             await show_add_volunteer_prompt(bot, chat_id, message_id)
             await bot.answer_callback_query(call.id)
             return {"action": "set_volunteer_state"}
+
+        # Список волонтеров
+        elif data == "admin_volunteers":
+            await show_volunteers_list(bot, chat_id, message_id, page=0)
+            await bot.answer_callback_query(call.id)
+
+        # Пагинация волонтеров
+        elif data.startswith("volunteers_page_"):
+            page = int(data.split("_")[2])
+            await show_volunteers_list(bot, chat_id, message_id, page=page)
+            await bot.answer_callback_query(call.id)
+
+        # Карточка волонтера
+        elif data.startswith("volunteer_"):
+            volunteer_id = int(data.split("_")[1])
+            await show_volunteer_card(bot, chat_id, message_id, volunteer_id)
+            await bot.answer_callback_query(call.id)
+
+        # Удаление волонтера - подтверждение
+        elif data.startswith("delete_volunteer_"):
+            volunteer_id = int(data.split("_")[2])
+            await show_delete_volunteer_confirm(bot, chat_id, message_id, volunteer_id)
+            await bot.answer_callback_query(call.id)
+
+        # Подтверждение удаления волонтера
+        elif data.startswith("confirm_del_volunteer_"):
+            volunteer_id = int(data.split("_")[3])
+            success = await delete_volunteer(volunteer_id)
+            if success:
+                await bot.answer_callback_query(call.id, "✅ Волонтер удален")
+                await show_volunteers_list(bot, chat_id, message_id, page=0)
+            else:
+                await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
+
+        # Изменение имени волонтера
+        elif data.startswith("edit_volunteer_name_"):
+            volunteer_id = int(data.split("_")[3])
+            await bot.answer_callback_query(call.id)
+            return {"action": "set_edit_volunteer_name", "volunteer_id": volunteer_id}
 
         # Заглушка для noop
         elif data == "noop":

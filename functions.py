@@ -500,34 +500,34 @@ async def record_block(user_tg_id):
 
         await session.commit()
 
-async def add_volunteer(user_tg_id):
+async def add_volunteer(user_tg_id: int, added_by: int = None, name: str = None):
+    """
+    Добавить волонтера
 
+    Args:
+        user_tg_id: Telegram ID волонтера
+        added_by: Telegram ID админа, который добавляет
+        name: Имя волонтера (опционально)
+
+    Returns:
+        True если добавлен, False если уже существует
+    """
     stmt = select(User_volunteer).where(User_volunteer.tg_id == user_tg_id)
 
-    print('stmt done')
-
     async with SessionLocal() as session:
-
         query = await session.execute(stmt)
-
-        print('query done')
-
         volunteer = query.scalars().one_or_none()
 
-        print('volunteer - ', volunteer)
-
         if volunteer is None:
-
-            # add
             volunteer = User_volunteer()
             volunteer.tg_id = user_tg_id
+            volunteer.added_at = datetime.now()
+            volunteer.added_by = added_by
+            volunteer.name = name
             session.add(volunteer)
             await session.commit()
-
             return True
-
         else:
-            print('trying to add duplicate volunteer!')
             return False
 
 

@@ -8,13 +8,15 @@ from modules.auth import (
 from modules.logger import log_role_switch, setup_logging
 from modules.admin_ui import (
     show_admin_menu, show_companies_list, handle_admin_callback,
-    show_search_results, show_volunteer_added
+    show_search_results, show_volunteer_added, show_edit_volunteer_name_prompt,
+    update_volunteer_name, show_volunteer_card
 )
 from modules.user_ui import (
     format_step_message, format_success_message, format_error_message,
     format_user_profile, get_user_profile_data, get_profile_keyboard,
     show_company_selection, get_step_text
 )
+from modules.auto_migrate import check_and_migrate
 
 # Настройка логирования
 setup_logging()
@@ -430,8 +432,46 @@ async def admin_read_volunteer_id(msg):
         await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
         return
 
-    success = await add_volunteer(user_tg_id)
+    admin_id = msg.from_user.id
+    success = await add_volunteer(user_tg_id, added_by=admin_id)
     await show_volunteer_added(bot, msg.chat.id, user_tg_id, success)
+    await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
+
+
+@bot.message_handler(content_types='text', state=[MyStates.admin_edit_volunteer_name])
+async def admin_edit_volunteer_name(msg):
+    """Обработка ввода имени волонтера"""
+    new_name = msg.text.strip()
+
+    if not new_name or len(new_name) > 255:
+        text = format_error_message(
+            "Неверное имя",
+            "Имя должно быть от 1 до 255 символов.",
+            "Попробуйте еще раз"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+        return
+
+    async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
+        volunteer_id = data.get('edit_volunteer_id')
+
+    if volunteer_id:
+        success = await update_volunteer_name(volunteer_id, new_name)
+        if success:
+            text = format_success_message(
+                "Имя обновлено",
+                f"Новое имя: {new_name}"
+            )
+            await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+            # Показываем обновленную карточку волонтера
+            await show_volunteer_card(bot, msg.chat.id, None, volunteer_id)
+        else:
+            text = format_error_message("Ошибка", "Не удалось обновить имя.")
+            await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+    else:
+        text = format_error_message("Ошибка", "Волонтер не найден.")
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+
     await bot.set_state(chat_id=msg.chat.id, user_id=msg.from_user.id, state=MyStates.admin_menu)
 
 
@@ -456,20 +496,23 @@ async def admin_handle_search(msg):
     # Если не найдено - остаемся в режиме поиска (admin_search state)
 
 
-@bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit, MyStates.admin_search])
+@bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit, MyStates.admin_search, MyStates.admin_edit_volunteer_name])
 async def callback(call):
 
     user_id = call.from_user.id
 
     # Сначала пробуем обработать через admin_ui
     admin_ui_callbacks = [
-        'admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users', 'admin_search', 'admin_add_volunteer', 'noop'
+        'admin_menu', 'admin_companies', 'admin_stats_detail', 'admin_users',
+        'admin_search', 'admin_add_volunteer', 'admin_volunteers', 'noop'
     ]
     admin_ui_prefixes = [
         'companies_page_', 'company_', 'comp_users_',
         'users_page_', 'users_filter_', 'user_',
         'edit_user_company_', 'sel_comp_page_', 'set_company_',
-        'delete_user_', 'confirm_delete_', 'search_page_'
+        'delete_user_', 'confirm_delete_', 'search_page_',
+        'volunteers_page_', 'volunteer_', 'delete_volunteer_',
+        'confirm_del_volunteer_', 'edit_volunteer_name_'
     ]
 
     if call.data in admin_ui_callbacks or any(call.data.startswith(p) for p in admin_ui_prefixes):
@@ -486,6 +529,12 @@ async def callback(call):
                     await show_search_results(bot, call.message.chat.id, search_query, result.get("page", 0), call.message.message_id)
             elif result.get("action") == "set_volunteer_state":
                 await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_read_volunteer_id)
+            elif result.get("action") == "set_edit_volunteer_name":
+                volunteer_id = result.get("volunteer_id")
+                async with bot.retrieve_data(user_id, call.message.chat.id) as data:
+                    data['edit_volunteer_id'] = volunteer_id
+                await show_edit_volunteer_name_prompt(bot, call.message.chat.id, volunteer_id, call.message.message_id)
+                await bot.set_state(user_id=user_id, chat_id=call.message.chat.id, state=MyStates.admin_edit_volunteer_name)
         return
 
     if call.data == 'get_total_excel':
@@ -760,4 +809,11 @@ async def callback(call):
             await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
 
 
-asyncio.run(bot.infinity_polling())
+async def main():
+    """Главная функция запуска бота"""
+    # Проверяем и применяем миграции БД
+    await check_and_migrate()
+    # Запускаем бота
+    await bot.infinity_polling()
+
+asyncio.run(main())

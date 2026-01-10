@@ -42,6 +42,7 @@ class MyStates(StatesGroup):
     # Новые состояния для админ-панели
     admin_search = State()  # Ожидание поискового запроса
     admin_edit_user_company = State()  # Ожидание ID нового предприятия
+    admin_edit_volunteer_name = State()  # Ожидание имени волонтера
 
 
 markup_agree_to_nda = types.InlineKeyboardMarkup()
