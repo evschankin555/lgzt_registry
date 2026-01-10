@@ -518,7 +518,7 @@ async def admin_handle_search(msg):
     # Если не найдено - остаемся в режиме поиска (admin_search state)
 
 
-@bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit, MyStates.admin_search, MyStates.admin_edit_volunteer_name])
+@bot.callback_query_handler(func=lambda call: True, state=[MyStates.admin_menu, MyStates.admin_read_user_id_for_edit, MyStates.admin_search, MyStates.admin_edit_volunteer_name, MyStates.admin_read_volunteer_id])
 async def callback(call):
 
     user_id = call.from_user.id
