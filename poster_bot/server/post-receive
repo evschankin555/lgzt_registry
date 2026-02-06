@@ -26,8 +26,8 @@ done
 # Checkout code
 log "Checking out code..."
 cd $DEPLOY_PATH
-GIT_DIR=$DEPLOY_PATH.git GIT_WORK_TREE=$DEPLOY_PATH git checkout -f main 2>>$LOG_FILE || \
-GIT_DIR=$DEPLOY_PATH.git GIT_WORK_TREE=$DEPLOY_PATH git checkout -f master 2>>$LOG_FILE
+# Извлекаем файлы из подпапки poster_bot в корень
+GIT_DIR=$DEPLOY_PATH.git git archive main poster_bot | tar -x --strip-components=1 -C $DEPLOY_PATH 2>>$LOG_FILE
 
 # Backend setup
 log "Setting up backend..."
