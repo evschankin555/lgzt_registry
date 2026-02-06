@@ -77,6 +77,9 @@ class SendPostRequest(BaseModel):
 
 class StartJoiningRequest(BaseModel):
     phone: str
+    limit: int = 0  # 0 = без лимита, иначе - сколько групп вступить
+    delay_min: int = 30  # Минимальная задержка (сек)
+    delay_max: int = 60  # Максимальная задержка (сек)
 
 
 # ========== Auth Endpoints ==========
@@ -396,7 +399,12 @@ async def start_joining(
     user=Depends(get_current_user)
 ):
     """Запустить процесс вступления в группы"""
-    result = await join_worker.start(request.phone)
+    result = await join_worker.start(
+        request.phone,
+        limit=request.limit,
+        delay_min=request.delay_min,
+        delay_max=request.delay_max
+    )
     return result
 
 

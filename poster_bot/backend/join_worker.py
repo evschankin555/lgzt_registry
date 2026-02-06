@@ -24,20 +24,30 @@ class JoinWorker:
             "joined": 0,
             "failed": 0,
             "current_group": None,
-            "next_attempt_in": 0
+            "next_attempt_in": 0,
+            "joined_this_session": 0,
+            "limit": 0
         }
         self.delay_min = 30  # Минимальная задержка между вступлениями (сек)
         self.delay_max = 60  # Максимальная задержка
         self.max_attempts = 3  # Максимум попыток на группу
+        self.limit = 0  # Лимит на сессию (0 = без лимита)
+        self.joined_this_session = 0  # Счётчик вступлений в текущей сессии
 
-    async def start(self, phone: str):
+    async def start(self, phone: str, limit: int = 0, delay_min: int = 30, delay_max: int = 60):
         """Запустить воркер"""
         if self.is_running:
             return {"status": "already_running"}
 
         self.is_running = True
+        self.limit = limit
+        self.delay_min = delay_min
+        self.delay_max = delay_max
+        self.joined_this_session = 0
+        self.stats["joined_this_session"] = 0
+        self.stats["limit"] = limit
         self.current_task = asyncio.create_task(self._run(phone))
-        return {"status": "started"}
+        return {"status": "started", "limit": limit, "delay_min": delay_min, "delay_max": delay_max}
 
     async def stop(self):
         """Остановить воркер"""
@@ -48,7 +58,7 @@ class JoinWorker:
                 await self.current_task
             except asyncio.CancelledError:
                 pass
-        return {"status": "stopped"}
+        return {"status": "stopped", "joined_this_session": self.joined_this_session}
 
     async def get_status(self) -> dict:
         """Получить текущий статус"""
@@ -64,6 +74,9 @@ class JoinWorker:
             result = await db.execute(stmt)
             self.stats["joining"] = len(result.scalars().all())
 
+        self.stats["joined_this_session"] = self.joined_this_session
+        self.stats["limit"] = self.limit
+
         return {
             "is_running": self.is_running,
             "stats": self.stats
@@ -74,6 +87,13 @@ class JoinWorker:
         import random
 
         while self.is_running:
+            # Проверяем лимит
+            if self.limit > 0 and self.joined_this_session >= self.limit:
+                print(f"JoinWorker: достигнут лимит {self.limit} групп")
+                self.is_running = False
+                self.stats["current_group"] = None
+                break
+
             try:
                 async with async_session() as db:
                     # Берём группу для вступления
@@ -89,10 +109,11 @@ class JoinWorker:
                     group = result.scalar_one_or_none()
 
                     if not group:
-                        # Нет групп для вступления
+                        # Нет групп для вступления - останавливаемся
+                        print("JoinWorker: нет групп для вступления")
                         self.stats["current_group"] = None
-                        await asyncio.sleep(10)
-                        continue
+                        self.is_running = False
+                        break
 
                     # Обновляем статус
                     group.status = "joining"
@@ -111,6 +132,8 @@ class JoinWorker:
                         group.telegram_id = str(result.get("group_id", ""))
                         group.title = result.get("title", "")
                         group.join_error = None
+                        self.joined_this_session += 1
+                        self.stats["joined_this_session"] = self.joined_this_session
                     else:
                         group.status = "failed"
                         group.join_error = result.get("error", "Unknown error")

@@ -30,6 +30,8 @@ interface JoiningStatus {
     failed: number;
     current_group: string | null;
     next_attempt_in: number;
+    joined_this_session: number;
+    limit: number;
   };
 }
 
@@ -175,6 +177,11 @@ function Dashboard({ onLogout }: DashboardProps) {
   const [messageSelectedGroups, setMessageSelectedGroups] = useState<number[]>([]);
   const [messageSendLoading, setMessageSendLoading] = useState(false);
   const [messageFilter, setMessageFilter] = useState('all'); // all, not_sent, sent, failed
+
+  // Join settings
+  const [joinLimit, setJoinLimit] = useState(20);
+  const [joinDelayMin, setJoinDelayMin] = useState(30);
+  const [joinDelayMax, setJoinDelayMax] = useState(60);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -375,7 +382,12 @@ function Dashboard({ onLogout }: DashboardProps) {
     }
 
     try {
-      await api.post('/api/groups/start-joining', { phone: acc.phone });
+      await api.post('/api/groups/start-joining', {
+        phone: acc.phone,
+        limit: joinLimit,
+        delay_min: joinDelayMin,
+        delay_max: joinDelayMax
+      });
       loadJoiningStatus();
     } catch (e) {
       console.error(e);
@@ -652,13 +664,66 @@ function Dashboard({ onLogout }: DashboardProps) {
                     Текущая группа: <strong>{joiningStatus.stats.current_group}</strong>
                     <br />
                     Следующая попытка через: {joiningStatus.stats.next_attempt_in} сек
+                    {joiningStatus.stats.limit > 0 && (
+                      <>
+                        <br />
+                        Вступили в сессии: <strong>{joiningStatus.stats.joined_this_session}</strong> / {joiningStatus.stats.limit}
+                      </>
+                    )}
                   </p>
+                )}
+
+                {!joiningStatus?.is_running && (
+                  <div style={{ marginBottom: '15px', padding: '15px', background: 'var(--panel-card)', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '120px' }}>
+                        <label style={{ fontSize: '12px' }}>Лимит групп</label>
+                        <input
+                          type="number"
+                          value={joinLimit}
+                          onChange={(e) => setJoinLimit(parseInt(e.target.value) || 0)}
+                          min={0}
+                          max={100}
+                          style={{ padding: '8px 12px' }}
+                        />
+                      </div>
+                      <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '120px' }}>
+                        <label style={{ fontSize: '12px' }}>Мин. задержка (сек)</label>
+                        <input
+                          type="number"
+                          value={joinDelayMin}
+                          onChange={(e) => setJoinDelayMin(parseInt(e.target.value) || 30)}
+                          min={10}
+                          max={300}
+                          style={{ padding: '8px 12px' }}
+                        />
+                      </div>
+                      <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '120px' }}>
+                        <label style={{ fontSize: '12px' }}>Макс. задержка (сек)</label>
+                        <input
+                          type="number"
+                          value={joinDelayMax}
+                          onChange={(e) => setJoinDelayMax(parseInt(e.target.value) || 60)}
+                          min={10}
+                          max={600}
+                          style={{ padding: '8px 12px' }}
+                        />
+                      </div>
+                    </div>
+                    <p style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      {joinLimit > 0
+                        ? `Вступим в ${joinLimit} групп с задержкой ${joinDelayMin}-${joinDelayMax} сек`
+                        : `Вступим во все группы с задержкой ${joinDelayMin}-${joinDelayMax} сек`
+                      }
+                      {joinLimit > 0 && ` (~${Math.round(joinLimit * (joinDelayMin + joinDelayMax) / 2 / 60)} мин)`}
+                    </p>
+                  </div>
                 )}
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   {!joiningStatus?.is_running ? (
                     <button className="btn btn-success" onClick={handleStartJoining}>
-                      Запустить вступление
+                      Вступить в {joinLimit > 0 ? joinLimit : 'все'} групп
                     </button>
                   ) : (
                     <button className="btn btn-danger" onClick={handleStopJoining}>
@@ -842,13 +907,63 @@ function Dashboard({ onLogout }: DashboardProps) {
                     <p>Текущая: <strong>{joiningStatus.stats.current_group}</strong></p>
                   )}
                   <p>Следующая через: {joiningStatus.stats.next_attempt_in} сек</p>
+                  {joiningStatus.stats.limit > 0 && (
+                    <p>Прогресс: <strong>{joiningStatus.stats.joined_this_session}</strong> / {joiningStatus.stats.limit}</p>
+                  )}
+                </div>
+              )}
+
+              {!joiningStatus?.is_running && (
+                <div style={{ marginBottom: '15px', padding: '15px', background: 'var(--panel-card)', borderRadius: '8px' }}>
+                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '120px' }}>
+                      <label style={{ fontSize: '12px' }}>Лимит групп</label>
+                      <input
+                        type="number"
+                        value={joinLimit}
+                        onChange={(e) => setJoinLimit(parseInt(e.target.value) || 0)}
+                        min={0}
+                        max={100}
+                        style={{ padding: '8px 12px' }}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '120px' }}>
+                      <label style={{ fontSize: '12px' }}>Мин. задержка (сек)</label>
+                      <input
+                        type="number"
+                        value={joinDelayMin}
+                        onChange={(e) => setJoinDelayMin(parseInt(e.target.value) || 30)}
+                        min={10}
+                        max={300}
+                        style={{ padding: '8px 12px' }}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '120px' }}>
+                      <label style={{ fontSize: '12px' }}>Макс. задержка (сек)</label>
+                      <input
+                        type="number"
+                        value={joinDelayMax}
+                        onChange={(e) => setJoinDelayMax(parseInt(e.target.value) || 60)}
+                        min={10}
+                        max={600}
+                        style={{ padding: '8px 12px' }}
+                      />
+                    </div>
+                  </div>
+                  <p style={{ marginTop: '10px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    {joinLimit > 0
+                      ? `Вступим в ${joinLimit} групп с задержкой ${joinDelayMin}-${joinDelayMax} сек`
+                      : `Вступим во все группы с задержкой ${joinDelayMin}-${joinDelayMax} сек`
+                    }
+                    {joinLimit > 0 && ` (~${Math.round(joinLimit * (joinDelayMin + joinDelayMax) / 2 / 60)} мин)`}
+                  </p>
                 </div>
               )}
 
               <div style={{ display: 'flex', gap: '10px' }}>
                 {!joiningStatus?.is_running ? (
                   <button className="btn btn-success" onClick={handleStartJoining} disabled={!groupStats?.pending}>
-                    Запустить вступление ({groupStats?.pending || 0})
+                    Вступить в {joinLimit > 0 ? `${joinLimit} из ${groupStats?.pending || 0}` : `все ${groupStats?.pending || 0}`} групп
                   </button>
                 ) : (
                   <button className="btn btn-danger" onClick={handleStopJoining}>
