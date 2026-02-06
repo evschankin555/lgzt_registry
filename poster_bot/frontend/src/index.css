@@ -380,7 +380,7 @@ textarea {
   font-weight: 500;
 }
 
-.status-success, .status-sent, .status-joined {
+.status-success, .status-sent, .status-joined, .status-completed {
   background: var(--success-bg);
   color: var(--success);
 }
@@ -400,10 +400,18 @@ textarea {
   color: var(--info);
 }
 
-.status-completed {
-  background: var(--success-bg);
-  color: var(--success);
-}
+/* Color utility classes */
+.text-success { color: var(--success); }
+.text-error { color: var(--error); }
+.text-warning { color: var(--warning); }
+.text-info { color: var(--info); }
+.text-muted { color: var(--text-muted); }
+.text-dim { color: var(--text-dim); }
+
+.bg-success { background: var(--success-bg); }
+.bg-error { background: var(--error-bg); }
+.bg-warning { background: var(--warning-bg); }
+.bg-info { background: var(--info-bg); }
 
 /* Phone auth */
 .phone-auth {

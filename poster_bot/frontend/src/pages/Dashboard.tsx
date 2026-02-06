@@ -630,19 +630,19 @@ function Dashboard({ onLogout }: DashboardProps) {
                 <h2>Статус вступления в группы</h2>
                 <div className="stats-grid" style={{ marginBottom: '15px' }}>
                   <div className="stat-card" style={{ padding: '15px' }}>
-                    <div className="value" style={{ fontSize: '24px', color: '#ffc107' }}>{groupStats?.pending || 0}</div>
+                    <div className="value" style={{ fontSize: '24px', color: 'var(--warning)' }}>{groupStats?.pending || 0}</div>
                     <div className="label">Ожидают</div>
                   </div>
                   <div className="stat-card" style={{ padding: '15px' }}>
-                    <div className="value" style={{ fontSize: '24px', color: '#17a2b8' }}>{groupStats?.joining || 0}</div>
+                    <div className="value" style={{ fontSize: '24px', color: 'var(--info)' }}>{groupStats?.joining || 0}</div>
                     <div className="label">В процессе</div>
                   </div>
                   <div className="stat-card" style={{ padding: '15px' }}>
-                    <div className="value" style={{ fontSize: '24px', color: '#28a745' }}>{groupStats?.joined || 0}</div>
+                    <div className="value" style={{ fontSize: '24px', color: 'var(--success)' }}>{groupStats?.joined || 0}</div>
                     <div className="label">Вступили</div>
                   </div>
                   <div className="stat-card" style={{ padding: '15px' }}>
-                    <div className="value" style={{ fontSize: '24px', color: '#dc3545' }}>{groupStats?.failed || 0}</div>
+                    <div className="value" style={{ fontSize: '24px', color: 'var(--error)' }}>{groupStats?.failed || 0}</div>
                     <div className="label">Ошибки</div>
                   </div>
                 </div>
@@ -787,7 +787,7 @@ function Dashboard({ onLogout }: DashboardProps) {
             {/* Import Excel */}
             <div className="card">
               <h2>Импорт групп из Excel</h2>
-              <p style={{ marginBottom: '15px', color: '#666' }}>
+              <p style={{ marginBottom: '15px', color: 'var(--text-muted)' }}>
                 Загрузите Excel файл с колонками: Город, Адрес, Ссылка на группу (t.me/+xxx или t.me/channel)
               </p>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
@@ -822,21 +822,21 @@ function Dashboard({ onLogout }: DashboardProps) {
               <h2>Вступление в группы</h2>
               <div className="stats-grid" style={{ marginBottom: '15px' }}>
                 <div className="stat-card" style={{ padding: '15px' }}>
-                  <div className="value" style={{ fontSize: '24px', color: '#ffc107' }}>{groupStats?.pending || 0}</div>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--warning)' }}>{groupStats?.pending || 0}</div>
                   <div className="label">Ожидают</div>
                 </div>
                 <div className="stat-card" style={{ padding: '15px' }}>
-                  <div className="value" style={{ fontSize: '24px', color: '#28a745' }}>{groupStats?.joined || 0}</div>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--success)' }}>{groupStats?.joined || 0}</div>
                   <div className="label">Вступили</div>
                 </div>
                 <div className="stat-card" style={{ padding: '15px' }}>
-                  <div className="value" style={{ fontSize: '24px', color: '#dc3545' }}>{groupStats?.failed || 0}</div>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--error)' }}>{groupStats?.failed || 0}</div>
                   <div className="label">Ошибки</div>
                 </div>
               </div>
 
               {joiningStatus?.is_running && (
-                <div style={{ marginBottom: '15px', padding: '10px', background: '#e8f4fd', borderRadius: '8px' }}>
+                <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--info-bg)', borderRadius: '8px' }}>
                   <p>Процесс вступления запущен</p>
                   {joiningStatus.stats.current_group && (
                     <p>Текущая: <strong>{joiningStatus.stats.current_group}</strong></p>
@@ -881,16 +881,16 @@ function Dashboard({ onLogout }: DashboardProps) {
                   <div key={group.id} className="group-item">
                     <div style={{ flex: 1 }}>
                       <div className="title">
-                        <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: '#007bff', textDecoration: 'none' }}>
+                        <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)', textDecoration: 'none' }}>
                           {group.title || group.address || group.link}
                         </a>
-                        {group.city && <span style={{ color: '#666', marginLeft: '8px' }}>({group.city})</span>}
+                        {group.city && <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>({group.city})</span>}
                       </div>
                       <div className="id">
                         {group.address && `${group.address} | `}
                         {group.telegram_id && `ID: ${group.telegram_id} | `}
                         {group.source === 'excel' ? 'Excel' : 'Вручную'}
-                        {group.join_error && <span style={{ color: '#dc3545' }}> | {group.join_error}</span>}
+                        {group.join_error && <span style={{ color: 'var(--error)' }}> | {group.join_error}</span>}
                       </div>
                     </div>
                     <span className={`status status-${group.status}`}>{group.status}</span>
@@ -945,7 +945,7 @@ function Dashboard({ onLogout }: DashboardProps) {
             <div className="card">
               <h2>Мои сообщения</h2>
               {messages.length === 0 ? (
-                <p style={{ color: '#666' }}>Нет созданных сообщений</p>
+                <p style={{ color: 'var(--text-muted)' }}>Нет созданных сообщений</p>
               ) : (
                 <div className="groups-list">
                   {messages.map((msg) => (
@@ -954,7 +954,7 @@ function Dashboard({ onLogout }: DashboardProps) {
                       className={`group-item ${selectedMessage?.id === msg.id ? 'selected' : ''}`}
                       style={{
                         cursor: 'pointer',
-                        background: selectedMessage?.id === msg.id ? '#e3f2fd' : undefined
+                        background: selectedMessage?.id === msg.id ? 'rgba(99, 102, 241, 0.15)' : undefined
                       }}
                       onClick={() => handleSelectMessage(msg)}
                     >
@@ -964,7 +964,7 @@ function Dashboard({ onLogout }: DashboardProps) {
                           {msg.caption ? msg.caption.substring(0, 50) + '...' : 'Без текста'}
                           {' | '}
                           Отправлено: {msg.stats.sent}/{msg.stats.total || 'нет'}
-                          {msg.stats.failed > 0 && <span style={{ color: '#dc3545' }}> | Ошибок: {msg.stats.failed}</span>}
+                          {msg.stats.failed > 0 && <span style={{ color: 'var(--error)' }}> | Ошибок: {msg.stats.failed}</span>}
                         </div>
                       </div>
                       <button
@@ -987,12 +987,12 @@ function Dashboard({ onLogout }: DashboardProps) {
 
                 {/* Sending Status */}
                 {sendingStatus && (
-                  <div style={{ marginBottom: '15px', padding: '10px', background: '#f8f9fa', borderRadius: '8px' }}>
+                  <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--panel-card)', borderRadius: '8px' }}>
                     <div style={{ display: 'flex', gap: '20px', marginBottom: '10px' }}>
-                      <span>Отправлено: <strong style={{ color: '#28a745' }}>{sendingStatus.stats.sent}</strong></span>
-                      <span>Ошибок: <strong style={{ color: '#dc3545' }}>{sendingStatus.stats.failed}</strong></span>
-                      <span>Ожидает: <strong style={{ color: '#ffc107' }}>{sendingStatus.stats.pending}</strong></span>
-                      {sendingStatus.is_sending && <span style={{ color: '#17a2b8' }}>Идёт отправка...</span>}
+                      <span>Отправлено: <strong style={{ color: 'var(--success)' }}>{sendingStatus.stats.sent}</strong></span>
+                      <span>Ошибок: <strong style={{ color: 'var(--error)' }}>{sendingStatus.stats.failed}</strong></span>
+                      <span>Ожидает: <strong style={{ color: 'var(--warning)' }}>{sendingStatus.stats.pending}</strong></span>
+                      {sendingStatus.is_sending && <span style={{ color: 'var(--info)' }}>Идёт отправка...</span>}
                     </div>
                   </div>
                 )}
@@ -1028,11 +1028,11 @@ function Dashboard({ onLogout }: DashboardProps) {
                   <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={handleMessageSelectNone}>
                     Снять все
                   </button>
-                  <span style={{ marginLeft: 'auto', color: '#666' }}>Выбрано: {messageSelectedGroups.length}</span>
+                  <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>Выбрано: {messageSelectedGroups.length}</span>
                 </div>
 
                 {/* Groups List */}
-                <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '8px' }}>
+                <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid var(--panel-border)', borderRadius: '8px' }}>
                   <table className="table" style={{ marginBottom: 0 }}>
                     <thead>
                       <tr>
@@ -1044,7 +1044,7 @@ function Dashboard({ onLogout }: DashboardProps) {
                     </thead>
                     <tbody>
                       {filteredMessageGroups.map((g) => (
-                        <tr key={g.id} style={{ background: g.send_status === 'sent' ? '#d4edda' : g.send_status === 'failed' ? '#f8d7da' : undefined }}>
+                        <tr key={g.id} style={{ background: g.send_status === 'sent' ? 'var(--success-bg)' : g.send_status === 'failed' ? 'var(--error-bg)' : undefined }}>
                           <td>
                             <input
                               type="checkbox"
@@ -1061,15 +1061,15 @@ function Dashboard({ onLogout }: DashboardProps) {
                           </td>
                           <td>
                             <div>{g.title}</div>
-                            <div style={{ fontSize: '12px', color: '#666' }}>
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                               {g.city && `${g.city} | `}{g.address}
                             </div>
                           </td>
                           <td>
-                            {g.send_status === 'sent' && <span style={{ color: '#28a745' }}>Отправлено</span>}
-                            {g.send_status === 'failed' && <span style={{ color: '#dc3545' }} title={g.error || ''}>Ошибка</span>}
-                            {g.send_status === 'sending' && <span style={{ color: '#17a2b8' }}>Отправка...</span>}
-                            {!g.send_status && <span style={{ color: '#666' }}>—</span>}
+                            {g.send_status === 'sent' && <span style={{ color: 'var(--success)' }}>Отправлено</span>}
+                            {g.send_status === 'failed' && <span style={{ color: 'var(--error)' }} title={g.error || ''}>Ошибка</span>}
+                            {g.send_status === 'sending' && <span style={{ color: 'var(--info)' }}>Отправка...</span>}
+                            {!g.send_status && <span style={{ color: 'var(--text-muted)' }}>—</span>}
                           </td>
                           <td>
                             <a href={g.link} target="_blank" rel="noopener noreferrer" style={{ marginRight: '8px' }}>Группа</a>
@@ -1130,8 +1130,8 @@ function Dashboard({ onLogout }: DashboardProps) {
                       <td>{post.id}</td>
                       <td>{post.caption || '-'}</td>
                       <td><span className={`status status-${post.status}`}>{post.status}</span></td>
-                      <td style={{ color: '#28a745' }}>{post.success_count}</td>
-                      <td style={{ color: '#dc3545' }}>{post.fail_count}</td>
+                      <td style={{ color: 'var(--success)' }}>{post.success_count}</td>
+                      <td style={{ color: 'var(--error)' }}>{post.fail_count}</td>
                       <td>{post.total_groups}</td>
                       <td>{new Date(post.created_at).toLocaleString('ru')}</td>
                       <td>
@@ -1170,7 +1170,7 @@ function Dashboard({ onLogout }: DashboardProps) {
                         <td>{r.group_title}</td>
                         <td>
                           <span className={`status status-${r.status}`}>{r.status}</span>
-                          {r.error && <span style={{ color: '#dc3545', marginLeft: '10px' }}>{r.error}</span>}
+                          {r.error && <span style={{ color: 'var(--error)', marginLeft: '10px' }}>{r.error}</span>}
                         </td>
                         <td>
                           {r.message_link ? (
