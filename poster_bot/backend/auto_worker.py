@@ -150,20 +150,28 @@ class AutoWorker:
                 now = datetime.utcnow() + timedelta(hours=3)
                 hour = now.hour
 
+                # КРИТИЧНО: Строгая проверка времени - после 21:00 полная остановка
+                if hour >= 21 or hour < 8:
+                    self.status["mode"] = "sleeping"
+                    self.status["current_action"] = f"Ночной режим (21:00-8:00). Сейчас {hour:02d}:00 МСК"
+                    # Спать 5 минут между проверками
+                    await asyncio.sleep(300)
+                    continue
+
                 if settings.join_start_hour <= hour < settings.join_end_hour:
-                    # Режим вступления
+                    # Режим вступления (8:00-16:00)
                     self.status["mode"] = "joining"
                     await self._do_joins(settings)
 
                 elif settings.send_start_hour <= hour < settings.send_end_hour:
-                    # Режим рассылки
+                    # Режим рассылки (16:00-21:00)
                     self.status["mode"] = "sending"
                     await self._do_sends(settings)
 
                 else:
-                    # Спящий режим
+                    # Промежуточный режим (между вступлением и рассылкой)
                     self.status["mode"] = "sleeping"
-                    self.status["current_action"] = f"Сон до {settings.join_start_hour}:00"
+                    self.status["current_action"] = f"Ожидание до {settings.send_start_hour}:00"
                     await asyncio.sleep(60)
 
                 # Проверяем авто-выход
@@ -194,6 +202,19 @@ class AutoWorker:
             return
 
         async with async_session() as db:
+            # УМНЫЙ ВЫХОД: проверяем лимит групп перед вступлением
+            stmt = select(func.count(Group.id)).where(Group.status == "joined")
+            joined_count = (await db.execute(stmt)).scalar() or 0
+
+            TELEGRAM_GROUP_LIMIT = 500  # Лимит Telegram
+
+            if joined_count >= TELEGRAM_GROUP_LIMIT - 10:
+                # Освобождаем место - выходим из старых групп
+                await self._leave_oldest_groups(db, count=10)
+                self.status["current_action"] = f"Освобождаем место (вышло из групп: {joined_count}/{TELEGRAM_GROUP_LIMIT})"
+                await asyncio.sleep(30)
+                return
+
             # Ищем MessageTarget с included=True, где группа ещё не joined
             stmt = select(MessageTarget).join(Group).where(
                 and_(
@@ -329,6 +350,14 @@ class AutoWorker:
                 await db.commit()
                 return
 
+            # ЗАЩИТА ОТ ДУБЛИКАТОВ: проверяем не отправляли ли уже в эту группу
+            if group.last_message_sent_id:
+                target.send_status = "skipped"
+                target.send_error = f"Already sent message #{group.last_message_sent_id} at {group.last_sent_at}"
+                await db.commit()
+                print(f"AutoWorker: пропускаем {group.title} - уже отправляли сообщение #{group.last_message_sent_id}")
+                return
+
             target.send_status = "sending"
             await db.commit()
 
@@ -352,6 +381,10 @@ class AutoWorker:
 
                 # Помечаем группу что можно выходить
                 group.can_leave = True
+
+                # Сохраняем что в эту группу отправили это сообщение (защита от дубликатов)
+                group.last_message_sent_id = message.id
+                group.last_sent_at = datetime.utcnow()
 
                 await self._increment_stat("send")
                 print(f"AutoWorker: отправлено в {group.title}")
@@ -420,6 +453,31 @@ class AutoWorker:
                     await asyncio.sleep(5)  # Небольшая пауза между выходами
                 except Exception as e:
                     print(f"AutoWorker: ошибка выхода из {group.title}: {e}")
+
+    async def _leave_oldest_groups(self, db: AsyncSession, count: int = 10):
+        """Выйти из самых старых групп где can_leave=True"""
+        stmt = select(Group).where(
+            and_(
+                Group.can_leave == True,
+                Group.status == "joined"
+            )
+        ).order_by(Group.joined_at).limit(count)
+
+        groups = (await db.execute(stmt)).scalars().all()
+
+        for group in groups:
+            try:
+                result = await tg.leave_group(self.phone, group.telegram_id)
+                if result.get("status") == "success":
+                    group.status = "left"
+                    group.left_at = datetime.utcnow()
+                    await self._increment_stat("leave")
+                    print(f"AutoWorker: освобождаем место - вышли из {group.title}")
+                await db.commit()
+                await asyncio.sleep(3)  # Пауза между выходами
+            except Exception as e:
+                print(f"AutoWorker: ошибка выхода из {group.title}: {e}")
+                await db.commit()  # Коммитим даже при ошибке
 
 
 # Глобальный экземпляр

@@ -44,6 +44,10 @@ class Group(Base):
     can_leave = Column(Boolean, default=False)  # Можно выходить (успешно отправили)
     left_at = Column(DateTime, nullable=True)  # Когда вышли из группы
 
+    # Защита от дубликатов
+    last_message_sent_id = Column(Integer, ForeignKey("messages.id"), nullable=True)  # ID последнего отправленного сообщения
+    last_sent_at = Column(DateTime, nullable=True)  # Когда отправили последнее сообщение
+
     # Источник
     source = Column(String(20), default="manual")  # manual, excel
 

@@ -1531,21 +1531,21 @@ function Dashboard({ onLogout }: DashboardProps) {
           <>
             {/* Auto Mode Status */}
             <div className="card">
-              <h2>Автоматический режим</h2>
+              <h2>🤖 Автоматический режим</h2>
 
               {/* Current Status */}
               <div className="stats-grid" style={{ marginBottom: '15px' }}>
                 <div className="stat-card" style={{ padding: '15px' }}>
                   <div className="value" style={{ fontSize: '24px', color: autoStatus?.is_running ? 'var(--success)' : 'var(--text-muted)' }}>
-                    {autoStatus?.is_running ? 'ВКЛ' : 'ВЫКЛ'}
+                    {autoStatus?.is_running ? '🟢 ВКЛ' : '⚫ ВЫКЛ'}
                   </div>
                   <div className="label">Статус</div>
                 </div>
                 <div className="stat-card" style={{ padding: '15px' }}>
                   <div className="value" style={{ fontSize: '24px', color: 'var(--info)' }}>
-                    {autoStatus?.status.mode === 'joining' ? 'Вступление' :
-                     autoStatus?.status.mode === 'sending' ? 'Рассылка' :
-                     autoStatus?.status.mode === 'sleeping' ? 'Сон' : 'Ожидание'}
+                    {autoStatus?.status.mode === 'joining' ? '📥 Вступление' :
+                     autoStatus?.status.mode === 'sending' ? '📤 Рассылка' :
+                     autoStatus?.status.mode === 'sleeping' ? '😴 Сон' : '⏸ Ожидание'}
                   </div>
                   <div className="label">Режим</div>
                 </div>
@@ -1557,11 +1557,105 @@ function Dashboard({ onLogout }: DashboardProps) {
                 </div>
               </div>
 
+              {/* Детальная статистика за сегодня */}
+              {autoStatus && (
+                <div style={{ marginBottom: '20px', padding: '15px', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <h3 style={{ marginBottom: '10px', fontSize: '16px' }}>📊 Лимиты на сегодня</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '5px' }}>Вступлений</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--info)' }}>
+                          {autoStatus.status.today_joins}
+                        </div>
+                        <div style={{ flex: 1, height: '8px', background: 'var(--bg)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.min((autoStatus.status.today_joins / 50) * 100, 100)}%`,
+                            height: '100%',
+                            background: 'var(--info)',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '5px' }}>Рассылок</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--success)' }}>
+                          {autoStatus.status.today_sends}
+                        </div>
+                        <div style={{ flex: 1, height: '8px', background: 'var(--bg)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.min((autoStatus.status.today_sends / 50) * 100, 100)}%`,
+                            height: '100%',
+                            background: 'var(--success)',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '5px' }}>Всего</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 'bold', color: 'var(--warning)' }}>
+                          {autoStatus.status.today_joins + autoStatus.status.today_sends}
+                        </div>
+                        <div style={{ flex: 1, height: '8px', background: 'var(--bg)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.min(((autoStatus.status.today_joins + autoStatus.status.today_sends) / autoStatus.status.daily_limit) * 100, 100)}%`,
+                            height: '100%',
+                            background: 'var(--warning)',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
+                        <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
+                          / {autoStatus.status.daily_limit}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Расписание */}
+              <div style={{ marginBottom: '20px', padding: '15px', background: 'var(--card-bg)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <h3 style={{ marginBottom: '10px', fontSize: '16px' }}>📅 Расписание (МСК)</h3>
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ fontSize: '20px' }}>📥</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 'bold' }}>8:00 - 16:00</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Вступление в группы</div>
+                    </div>
+                    {autoStatus?.status.mode === 'joining' && <div style={{ color: 'var(--info)' }}>◄ Сейчас</div>}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ fontSize: '20px' }}>📤</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 'bold' }}>16:00 - 21:00</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Рассылка сообщений</div>
+                    </div>
+                    {autoStatus?.status.mode === 'sending' && <div style={{ color: 'var(--success)' }}>◄ Сейчас</div>}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ fontSize: '20px' }}>😴</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 'bold' }}>21:00 - 8:00</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Ночной режим (сон)</div>
+                    </div>
+                    {autoStatus?.status.mode === 'sleeping' && <div style={{ color: 'var(--text-muted)' }}>◄ Сейчас</div>}
+                  </div>
+                </div>
+              </div>
+
               {autoStatus?.is_running && autoStatus.status.current_action && (
-                <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--info-bg)', borderRadius: '8px' }}>
-                  <p>{autoStatus.status.current_action}</p>
+                <div style={{ marginBottom: '15px', padding: '12px', background: 'var(--info-bg)', borderRadius: '8px', border: '1px solid var(--info)' }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>⏱ Текущее действие:</div>
+                  <p style={{ margin: 0 }}>{autoStatus.status.current_action}</p>
                   {autoStatus.status.next_action_in > 0 && (
-                    <p>Следующее действие через: {autoStatus.status.next_action_in} сек</p>
+                    <p style={{ margin: '5px 0 0 0', fontSize: '14px', color: 'var(--text-muted)' }}>
+                      Следующее через: {autoStatus.status.next_action_in} сек
+                    </p>
                   )}
                 </div>
               )}
@@ -1569,11 +1663,11 @@ function Dashboard({ onLogout }: DashboardProps) {
               <div style={{ display: 'flex', gap: '10px' }}>
                 {!autoStatus?.is_running ? (
                   <button className="btn btn-success" onClick={handleStartAutoMode}>
-                    Запустить автоматику
+                    ▶ Запустить автоматику
                   </button>
                 ) : (
                   <button className="btn btn-danger" onClick={handleStopAutoMode}>
-                    Остановить
+                    ⏸ Остановить
                   </button>
                 )}
               </div>
