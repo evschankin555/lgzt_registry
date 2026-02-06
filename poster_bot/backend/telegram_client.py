@@ -3,7 +3,7 @@ import asyncio
 from typing import Optional
 from telethon import TelegramClient
 from telethon.tl.functions.messages import ImportChatInviteRequest
-from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError
 from config import get_settings
 
@@ -226,6 +226,23 @@ async def get_dialogs(phone: str) -> dict:
                     "is_group": dialog.is_group
                 })
         return {"status": "success", "groups": groups}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def leave_group(phone: str, group_id: str) -> dict:
+    """Выйти из группы"""
+    client = await get_client(phone)
+
+    if not client.is_connected():
+        await client.connect()
+
+    if not await client.is_user_authorized():
+        return {"status": "error", "message": "Not authorized"}
+
+    try:
+        await client(LeaveChannelRequest(int(group_id)))
+        return {"status": "success"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

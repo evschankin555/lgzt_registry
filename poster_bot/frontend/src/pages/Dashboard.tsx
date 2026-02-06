@@ -19,6 +19,10 @@ interface GroupStats {
   joined: number;
   failed: number;
   total: number;
+  approved: number;
+  approved_pending: number;
+  approved_joined: number;
+}
 }
 
 interface JoiningStatus {
@@ -56,6 +60,8 @@ interface Group {
   join_error: string | null;
   join_attempts: number;
   source: string;
+  approved: boolean;
+  can_leave: boolean;
 }
 
 interface Post {
@@ -127,6 +133,48 @@ interface SendingStatus {
   }>;
 }
 
+interface BotSettings {
+  active_message_id: number | null;
+  daily_limit: number;
+  join_limit_per_session: number;
+  send_limit_per_session: number;
+  join_start_hour: number;
+  join_end_hour: number;
+  send_start_hour: number;
+  send_end_hour: number;
+  join_delay_min: number;
+  join_delay_max: number;
+  send_delay_min: number;
+  send_delay_max: number;
+  wait_before_send_hours: number;
+  auto_leave_enabled: boolean;
+  leave_after_days: number;
+  auto_mode_enabled: boolean;
+}
+
+interface AutoStatus {
+  is_running: boolean;
+  status: {
+    mode: string;
+    current_action: string | null;
+    next_action_in: number;
+    today_joins: number;
+    today_sends: number;
+    today_leaves: number;
+    daily_limit: number;
+    session_joins: number;
+    session_sends: number;
+  };
+}
+
+interface DailyStatsData {
+  date: string;
+  joins_count: number;
+  sends_count: number;
+  leaves_count: number;
+  total: number;
+}
+
 function Dashboard({ onLogout }: DashboardProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [stats, setStats] = useState<Stats | null>(null);
@@ -182,6 +230,12 @@ function Dashboard({ onLogout }: DashboardProps) {
   const [joinLimit, setJoinLimit] = useState(20);
   const [joinDelayMin, setJoinDelayMin] = useState(30);
   const [joinDelayMax, setJoinDelayMax] = useState(60);
+
+  // Bot settings & auto mode
+  const [botSettings, setBotSettings] = useState<BotSettings | null>(null);
+  const [autoStatus, setAutoStatus] = useState<AutoStatus | null>(null);
+  const [dailyStats, setDailyStats] = useState<DailyStatsData | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(false);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -267,6 +321,33 @@ function Dashboard({ onLogout }: DashboardProps) {
     }
   }, []);
 
+  const loadBotSettings = useCallback(async () => {
+    try {
+      const res = await api.get('/api/settings');
+      setBotSettings(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadAutoStatus = useCallback(async () => {
+    try {
+      const res = await api.get('/api/auto/status');
+      setAutoStatus(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadDailyStats = useCallback(async () => {
+    try {
+      const res = await api.get('/api/daily-stats');
+      setDailyStats(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
   useEffect(() => {
     loadStats();
     loadGroupStats();
@@ -275,15 +356,20 @@ function Dashboard({ onLogout }: DashboardProps) {
     loadPosts();
     loadJoiningStatus();
     loadMessages();
+    loadBotSettings();
+    loadAutoStatus();
+    loadDailyStats();
 
-    // Polling for joining status
+    // Polling for joining status and auto status
     const interval = setInterval(() => {
       loadJoiningStatus();
       loadGroupStats();
+      loadAutoStatus();
+      loadDailyStats();
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [loadStats, loadGroupStats, loadAccounts, loadGroups, loadPosts, loadJoiningStatus, loadMessages]);
+  }, [loadStats, loadGroupStats, loadAccounts, loadGroups, loadPosts, loadJoiningStatus, loadMessages, loadBotSettings, loadAutoStatus, loadDailyStats]);
 
   // Polling for sending status when message is selected and sending
   useEffect(() => {
@@ -400,6 +486,95 @@ function Dashboard({ onLogout }: DashboardProps) {
       loadJoiningStatus();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Auto mode handlers
+  const handleStartAutoMode = async () => {
+    const acc = accounts.find(a => a.is_authorized);
+    if (!acc) {
+      alert('Нет авторизованного аккаунта');
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append('phone', acc.phone);
+      await api.post('/api/auto/start', formData);
+      loadAutoStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleStopAutoMode = async () => {
+    try {
+      await api.post('/api/auto/stop');
+      loadAutoStatus();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Approve groups handler
+  const handleApproveGroups = async (groupIds: number[], approved: boolean) => {
+    try {
+      const formData = new FormData();
+      formData.append('group_ids', groupIds.join(','));
+      formData.append('approved', String(approved));
+      await api.post('/api/groups/approve', formData);
+      loadGroups();
+      loadGroupStats();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleApproveAllGroups = async (filter: string, approved: boolean) => {
+    try {
+      const formData = new FormData();
+      formData.append('filter', filter);
+      formData.append('approved', String(approved));
+      await api.post('/api/groups/approve-all', formData);
+      loadGroups();
+      loadGroupStats();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Save settings handler
+  const handleSaveSettings = async () => {
+    if (!botSettings) return;
+    setSettingsLoading(true);
+
+    try {
+      const formData = new FormData();
+      if (botSettings.active_message_id) {
+        formData.append('active_message_id', String(botSettings.active_message_id));
+      }
+      formData.append('daily_limit', String(botSettings.daily_limit));
+      formData.append('join_limit_per_session', String(botSettings.join_limit_per_session));
+      formData.append('send_limit_per_session', String(botSettings.send_limit_per_session));
+      formData.append('join_start_hour', String(botSettings.join_start_hour));
+      formData.append('join_end_hour', String(botSettings.join_end_hour));
+      formData.append('send_start_hour', String(botSettings.send_start_hour));
+      formData.append('send_end_hour', String(botSettings.send_end_hour));
+      formData.append('join_delay_min', String(botSettings.join_delay_min));
+      formData.append('join_delay_max', String(botSettings.join_delay_max));
+      formData.append('send_delay_min', String(botSettings.send_delay_min));
+      formData.append('send_delay_max', String(botSettings.send_delay_max));
+      formData.append('wait_before_send_hours', String(botSettings.wait_before_send_hours));
+      formData.append('auto_leave_enabled', String(botSettings.auto_leave_enabled));
+      formData.append('leave_after_days', String(botSettings.leave_after_days));
+
+      await api.post('/api/settings', formData);
+      alert('Настройки сохранены');
+    } catch (e) {
+      console.error(e);
+      alert('Ошибка сохранения настроек');
+    } finally {
+      setSettingsLoading(false);
     }
   };
 
@@ -607,6 +782,9 @@ function Dashboard({ onLogout }: DashboardProps) {
         </button>
         <button className={`nav-tab ${activeTab === 'messages' ? 'active' : ''}`} onClick={() => { setActiveTab('messages'); loadMessages(); }}>
           Сообщения
+        </button>
+        <button className={`nav-tab ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => { setActiveTab('settings'); loadBotSettings(); }}>
+          Настройки
         </button>
         <button className={`nav-tab ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
           История
@@ -975,7 +1153,7 @@ function Dashboard({ onLogout }: DashboardProps) {
 
             {/* Groups List */}
             <div className="card">
-              <h2>Список групп ({groups.length})</h2>
+              <h2>Список групп ({groups.length}) {groupStats?.approved ? `| Одобрено: ${groupStats.approved}` : ''}</h2>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
                 <button className={`nav-tab ${groupFilter === 'all' ? 'active' : ''}`} onClick={() => { setGroupFilter('all'); loadGroups(); }}>
                   Все
@@ -989,23 +1167,48 @@ function Dashboard({ onLogout }: DashboardProps) {
                 <button className={`nav-tab ${groupFilter === 'failed' ? 'active' : ''}`} onClick={() => { setGroupFilter('failed'); loadGroups('failed'); }}>
                   Ошибки
                 </button>
+                <button className={`nav-tab ${groupFilter === 'approved' ? 'active' : ''}`} onClick={() => { setGroupFilter('approved'); loadGroups('approved'); }}>
+                  Одобренные
+                </button>
+              </div>
+
+              {/* Bulk approve buttons */}
+              <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
+                <button className="btn btn-success" style={{ padding: '6px 12px' }} onClick={() => handleApproveAllGroups('pending', true)}>
+                  Одобрить все pending
+                </button>
+                <button className="btn" style={{ padding: '6px 12px' }} onClick={() => handleApproveAllGroups('joined', true)}>
+                  Одобрить все joined
+                </button>
+                <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={() => handleApproveAllGroups('all', false)}>
+                  Снять все одобрения
+                </button>
               </div>
 
               <div className="groups-list" style={{ maxHeight: '500px', overflowY: 'auto' }}>
                 {groups.map((group) => (
-                  <div key={group.id} className="group-item">
-                    <div style={{ flex: 1 }}>
-                      <div className="title">
-                        <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)', textDecoration: 'none' }}>
-                          {group.title || group.address || group.link}
-                        </a>
-                        {group.city && <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>({group.city})</span>}
-                      </div>
-                      <div className="id">
-                        {group.address && `${group.address} | `}
-                        {group.telegram_id && `ID: ${group.telegram_id} | `}
-                        {group.source === 'excel' ? 'Excel' : 'Вручную'}
-                        {group.join_error && <span style={{ color: 'var(--error)' }}> | {group.join_error}</span>}
+                  <div key={group.id} className="group-item" style={{ background: group.approved ? 'rgba(34, 197, 94, 0.1)' : undefined }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <input
+                        type="checkbox"
+                        checked={group.approved}
+                        onChange={(e) => handleApproveGroups([group.id], e.target.checked)}
+                        title="Одобрить для автопостинга"
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div className="title">
+                          <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)', textDecoration: 'none' }}>
+                            {group.title || group.address || group.link}
+                          </a>
+                          {group.city && <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>({group.city})</span>}
+                        </div>
+                        <div className="id">
+                          {group.address && `${group.address} | `}
+                          {group.telegram_id && `ID: ${group.telegram_id} | `}
+                          {group.source === 'excel' ? 'Excel' : 'Вручную'}
+                          {group.can_leave && <span style={{ color: 'var(--warning)' }}> | Можно выйти</span>}
+                          {group.join_error && <span style={{ color: 'var(--error)' }}> | {group.join_error}</span>}
+                        </div>
                       </div>
                     </div>
                     <span className={`status status-${group.status}`}>{group.status}</span>
@@ -1218,6 +1421,262 @@ function Dashboard({ onLogout }: DashboardProps) {
                 </div>
               </div>
             )}
+          </>
+        )}
+
+        {/* Settings Tab */}
+        {activeTab === 'settings' && botSettings && (
+          <>
+            {/* Auto Mode Status */}
+            <div className="card">
+              <h2>Автоматический режим</h2>
+
+              {/* Current Status */}
+              <div className="stats-grid" style={{ marginBottom: '15px' }}>
+                <div className="stat-card" style={{ padding: '15px' }}>
+                  <div className="value" style={{ fontSize: '24px', color: autoStatus?.is_running ? 'var(--success)' : 'var(--text-muted)' }}>
+                    {autoStatus?.is_running ? 'ВКЛ' : 'ВЫКЛ'}
+                  </div>
+                  <div className="label">Статус</div>
+                </div>
+                <div className="stat-card" style={{ padding: '15px' }}>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--info)' }}>
+                    {autoStatus?.status.mode === 'joining' ? 'Вступление' :
+                     autoStatus?.status.mode === 'sending' ? 'Рассылка' :
+                     autoStatus?.status.mode === 'sleeping' ? 'Сон' : 'Ожидание'}
+                  </div>
+                  <div className="label">Режим</div>
+                </div>
+                <div className="stat-card" style={{ padding: '15px' }}>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--warning)' }}>
+                    {dailyStats?.total || 0} / {botSettings.daily_limit}
+                  </div>
+                  <div className="label">Действий сегодня</div>
+                </div>
+              </div>
+
+              {autoStatus?.is_running && autoStatus.status.current_action && (
+                <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--info-bg)', borderRadius: '8px' }}>
+                  <p>{autoStatus.status.current_action}</p>
+                  {autoStatus.status.next_action_in > 0 && (
+                    <p>Следующее действие через: {autoStatus.status.next_action_in} сек</p>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {!autoStatus?.is_running ? (
+                  <button className="btn btn-success" onClick={handleStartAutoMode}>
+                    Запустить автоматику
+                  </button>
+                ) : (
+                  <button className="btn btn-danger" onClick={handleStopAutoMode}>
+                    Остановить
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Settings Form */}
+            <div className="card">
+              <h2>Настройки</h2>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
+                {/* Active Message */}
+                <div className="form-group">
+                  <label>Активное сообщение для автопостинга</label>
+                  <select
+                    value={botSettings.active_message_id || ''}
+                    onChange={(e) => setBotSettings({ ...botSettings, active_message_id: e.target.value ? Number(e.target.value) : null })}
+                  >
+                    <option value="">Не выбрано</option>
+                    {messages.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Daily Limit */}
+                <div className="form-group">
+                  <label>Дневной лимит действий</label>
+                  <input
+                    type="number"
+                    value={botSettings.daily_limit}
+                    onChange={(e) => setBotSettings({ ...botSettings, daily_limit: Number(e.target.value) })}
+                    min={10}
+                    max={500}
+                  />
+                </div>
+
+                {/* Session Limits */}
+                <div className="form-group">
+                  <label>Лимит вступлений за сессию</label>
+                  <input
+                    type="number"
+                    value={botSettings.join_limit_per_session}
+                    onChange={(e) => setBotSettings({ ...botSettings, join_limit_per_session: Number(e.target.value) })}
+                    min={1}
+                    max={100}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Лимит отправок за сессию</label>
+                  <input
+                    type="number"
+                    value={botSettings.send_limit_per_session}
+                    onChange={(e) => setBotSettings({ ...botSettings, send_limit_per_session: Number(e.target.value) })}
+                    min={1}
+                    max={100}
+                  />
+                </div>
+              </div>
+
+              <h3 style={{ marginTop: '20px' }}>Расписание (МСК)</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
+                <div className="form-group">
+                  <label>Вступление: начало</label>
+                  <input
+                    type="number"
+                    value={botSettings.join_start_hour}
+                    onChange={(e) => setBotSettings({ ...botSettings, join_start_hour: Number(e.target.value) })}
+                    min={0}
+                    max={23}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Вступление: конец</label>
+                  <input
+                    type="number"
+                    value={botSettings.join_end_hour}
+                    onChange={(e) => setBotSettings({ ...botSettings, join_end_hour: Number(e.target.value) })}
+                    min={0}
+                    max={23}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Рассылка: начало</label>
+                  <input
+                    type="number"
+                    value={botSettings.send_start_hour}
+                    onChange={(e) => setBotSettings({ ...botSettings, send_start_hour: Number(e.target.value) })}
+                    min={0}
+                    max={23}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Рассылка: конец</label>
+                  <input
+                    type="number"
+                    value={botSettings.send_end_hour}
+                    onChange={(e) => setBotSettings({ ...botSettings, send_end_hour: Number(e.target.value) })}
+                    min={0}
+                    max={23}
+                  />
+                </div>
+              </div>
+
+              <h3 style={{ marginTop: '20px' }}>Задержки (секунды)</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '20px' }}>
+                <div className="form-group">
+                  <label>Вступление мин.</label>
+                  <input
+                    type="number"
+                    value={botSettings.join_delay_min}
+                    onChange={(e) => setBotSettings({ ...botSettings, join_delay_min: Number(e.target.value) })}
+                    min={10}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Вступление макс.</label>
+                  <input
+                    type="number"
+                    value={botSettings.join_delay_max}
+                    onChange={(e) => setBotSettings({ ...botSettings, join_delay_max: Number(e.target.value) })}
+                    min={10}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Рассылка мин.</label>
+                  <input
+                    type="number"
+                    value={botSettings.send_delay_min}
+                    onChange={(e) => setBotSettings({ ...botSettings, send_delay_min: Number(e.target.value) })}
+                    min={10}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Рассылка макс.</label>
+                  <input
+                    type="number"
+                    value={botSettings.send_delay_max}
+                    onChange={(e) => setBotSettings({ ...botSettings, send_delay_max: Number(e.target.value) })}
+                    min={10}
+                  />
+                </div>
+              </div>
+
+              <h3 style={{ marginTop: '20px' }}>Дополнительно</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' }}>
+                <div className="form-group">
+                  <label>Ждать перед отправкой (часов)</label>
+                  <input
+                    type="number"
+                    value={botSettings.wait_before_send_hours}
+                    onChange={(e) => setBotSettings({ ...botSettings, wait_before_send_hours: Number(e.target.value) })}
+                    min={0}
+                    max={48}
+                  />
+                  <small style={{ color: 'var(--text-muted)' }}>После вступления ждём перед отправкой</small>
+                </div>
+                <div className="form-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={botSettings.auto_leave_enabled}
+                      onChange={(e) => setBotSettings({ ...botSettings, auto_leave_enabled: e.target.checked })}
+                      style={{ marginRight: '10px' }}
+                    />
+                    Авто-выход из групп
+                  </label>
+                </div>
+                <div className="form-group">
+                  <label>Выходить через (дней)</label>
+                  <input
+                    type="number"
+                    value={botSettings.leave_after_days}
+                    onChange={(e) => setBotSettings({ ...botSettings, leave_after_days: Number(e.target.value) })}
+                    min={1}
+                    max={30}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginTop: '20px' }}>
+                <button className="btn btn-success" onClick={handleSaveSettings} disabled={settingsLoading}>
+                  {settingsLoading ? 'Сохранение...' : 'Сохранить настройки'}
+                </button>
+              </div>
+            </div>
+
+            {/* Daily Stats */}
+            <div className="card">
+              <h2>Статистика за сегодня</h2>
+              <div className="stats-grid">
+                <div className="stat-card" style={{ padding: '15px' }}>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--info)' }}>{dailyStats?.joins_count || 0}</div>
+                  <div className="label">Вступлений</div>
+                </div>
+                <div className="stat-card" style={{ padding: '15px' }}>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--success)' }}>{dailyStats?.sends_count || 0}</div>
+                  <div className="label">Отправок</div>
+                </div>
+                <div className="stat-card" style={{ padding: '15px' }}>
+                  <div className="value" style={{ fontSize: '24px', color: 'var(--warning)' }}>{dailyStats?.leaves_count || 0}</div>
+                  <div className="label">Выходов</div>
+                </div>
+              </div>
+            </div>
           </>
         )}
 

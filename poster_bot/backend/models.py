@@ -1,6 +1,6 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Date
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, date
 from database import Base
 
 
@@ -39,6 +39,12 @@ class Group(Base):
     join_attempts = Column(Integer, default=0)  # Количество попыток входа
     last_attempt_at = Column(DateTime, nullable=True)  # Время последней попытки
     joined_at = Column(DateTime, nullable=True)  # Когда успешно вошли
+
+    # Для автоматической рассылки
+    approved = Column(Boolean, default=False)  # Одобрена для автопостинга
+    can_leave = Column(Boolean, default=False)  # Можно выходить (успешно отправили)
+    left_at = Column(DateTime, nullable=True)  # Когда вышли из группы
+    priority = Column(Integer, default=0)  # Приоритет (выше = раньше)
 
     # Источник
     source = Column(String(20), default="manual")  # manual, excel
@@ -140,3 +146,52 @@ class MessageSend(Base):
 
     message = relationship("Message", back_populates="sends")
     group = relationship("Group")
+
+
+class DailyStats(Base):
+    """Статистика действий за день"""
+    __tablename__ = "daily_stats"
+
+    date = Column(Date, primary_key=True, default=date.today)
+    joins_count = Column(Integer, default=0)   # Вступлений
+    sends_count = Column(Integer, default=0)   # Отправок
+    leaves_count = Column(Integer, default=0)  # Выходов
+
+
+class BotSettings(Base):
+    """Настройки автоматического постинга"""
+    __tablename__ = "bot_settings"
+
+    id = Column(Integer, primary_key=True)
+
+    # Активное сообщение для автопостинга
+    active_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+
+    # Лимиты
+    daily_limit = Column(Integer, default=100)  # Действий в день
+    join_limit_per_session = Column(Integer, default=20)
+    send_limit_per_session = Column(Integer, default=20)
+
+    # Расписание (часы, МСК)
+    join_start_hour = Column(Integer, default=8)   # Начало вступлений
+    join_end_hour = Column(Integer, default=16)    # Конец вступлений
+    send_start_hour = Column(Integer, default=16)  # Начало рассылки
+    send_end_hour = Column(Integer, default=21)    # Конец рассылки
+
+    # Задержки (секунды)
+    join_delay_min = Column(Integer, default=30)
+    join_delay_max = Column(Integer, default=60)
+    send_delay_min = Column(Integer, default=30)
+    send_delay_max = Column(Integer, default=60)
+
+    # Ожидание перед отправкой
+    wait_before_send_hours = Column(Integer, default=4)  # Часов ждать после вступления
+
+    # Авто-выход
+    auto_leave_enabled = Column(Boolean, default=True)
+    leave_after_days = Column(Integer, default=7)  # Выйти через N дней после отправки
+
+    # Автоматика
+    auto_mode_enabled = Column(Boolean, default=False)  # Автоматический режим включен
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

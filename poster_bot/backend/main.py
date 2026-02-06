@@ -14,12 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db, init_db
-from models import TelegramAccount, Group, Post, PostResult, Message, MessageSend
+from models import TelegramAccount, Group, Post, PostResult, Message, MessageSend, BotSettings, DailyStats
 from auth import (
     Token, LoginRequest, create_access_token, authenticate, get_current_user
 )
 from excel_import import parse_excel, validate_excel
 from join_worker import join_worker
+from auto_worker import auto_worker
 import telegram_client as tg
 
 settings = get_settings()
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     await join_worker.stop()
+    await auto_worker.stop()
     await tg.disconnect_all()
 
 
@@ -299,7 +301,7 @@ async def join_group(
 
 @app.get("/api/groups")
 async def get_groups(
-    filter: Optional[str] = Query(None),  # all, joined, pending, failed
+    filter: Optional[str] = Query(None),  # all, joined, pending, failed, approved
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -311,6 +313,10 @@ async def get_groups(
         stmt = stmt.where(Group.status == "pending")
     elif filter == "failed":
         stmt = stmt.where(Group.status == "failed")
+    elif filter == "approved":
+        stmt = stmt.where(Group.approved == True)
+    elif filter == "not_approved":
+        stmt = stmt.where(Group.approved == False)
 
     stmt = stmt.order_by(Group.added_at.desc())
     result = await db.execute(stmt)
@@ -329,8 +335,11 @@ async def get_groups(
             "join_error": g.join_error,
             "join_attempts": g.join_attempts,
             "source": g.source,
+            "approved": g.approved,
+            "can_leave": g.can_leave,
             "added_at": g.added_at.isoformat(),
-            "joined_at": g.joined_at.isoformat() if g.joined_at else None
+            "joined_at": g.joined_at.isoformat() if g.joined_at else None,
+            "left_at": g.left_at.isoformat() if g.left_at else None
         }
         for g in groups
     ]
@@ -349,6 +358,24 @@ async def get_groups_stats(
 
     stmt = select(func.count(Group.id))
     stats["total"] = (await db.execute(stmt)).scalar() or 0
+
+    # Одобренные
+    stmt = select(func.count(Group.id)).where(Group.approved == True)
+    stats["approved"] = (await db.execute(stmt)).scalar() or 0
+
+    # Одобренные и pending (готовы к вступлению)
+    stmt = select(func.count(Group.id)).where(
+        Group.approved == True,
+        Group.status == "pending"
+    )
+    stats["approved_pending"] = (await db.execute(stmt)).scalar() or 0
+
+    # Одобренные и joined (готовы к рассылке)
+    stmt = select(func.count(Group.id)).where(
+        Group.approved == True,
+        Group.status == "joined"
+    )
+    stats["approved_joined"] = (await db.execute(stmt)).scalar() or 0
 
     return stats
 
@@ -1000,6 +1027,207 @@ async def get_sending_status(
         "is_sending": message.status == "sending",
         "recent_sends": latest_sends
     }
+
+
+# ========== Settings & Auto Mode Endpoints ==========
+
+@app.get("/api/settings")
+async def get_settings_api(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить настройки бота"""
+    stmt = select(BotSettings).limit(1)
+    settings = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not settings:
+        settings = BotSettings()
+        db.add(settings)
+        await db.commit()
+        await db.refresh(settings)
+
+    return {
+        "active_message_id": settings.active_message_id,
+        "daily_limit": settings.daily_limit,
+        "join_limit_per_session": settings.join_limit_per_session,
+        "send_limit_per_session": settings.send_limit_per_session,
+        "join_start_hour": settings.join_start_hour,
+        "join_end_hour": settings.join_end_hour,
+        "send_start_hour": settings.send_start_hour,
+        "send_end_hour": settings.send_end_hour,
+        "join_delay_min": settings.join_delay_min,
+        "join_delay_max": settings.join_delay_max,
+        "send_delay_min": settings.send_delay_min,
+        "send_delay_max": settings.send_delay_max,
+        "wait_before_send_hours": settings.wait_before_send_hours,
+        "auto_leave_enabled": settings.auto_leave_enabled,
+        "leave_after_days": settings.leave_after_days,
+        "auto_mode_enabled": settings.auto_mode_enabled
+    }
+
+
+@app.post("/api/settings")
+async def update_settings(
+    active_message_id: Optional[int] = Form(None),
+    daily_limit: int = Form(100),
+    join_limit_per_session: int = Form(20),
+    send_limit_per_session: int = Form(20),
+    join_start_hour: int = Form(8),
+    join_end_hour: int = Form(16),
+    send_start_hour: int = Form(16),
+    send_end_hour: int = Form(21),
+    join_delay_min: int = Form(30),
+    join_delay_max: int = Form(60),
+    send_delay_min: int = Form(30),
+    send_delay_max: int = Form(60),
+    wait_before_send_hours: int = Form(4),
+    auto_leave_enabled: bool = Form(True),
+    leave_after_days: int = Form(7),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Обновить настройки бота"""
+    stmt = select(BotSettings).limit(1)
+    settings = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not settings:
+        settings = BotSettings()
+        db.add(settings)
+
+    settings.active_message_id = active_message_id
+    settings.daily_limit = daily_limit
+    settings.join_limit_per_session = join_limit_per_session
+    settings.send_limit_per_session = send_limit_per_session
+    settings.join_start_hour = join_start_hour
+    settings.join_end_hour = join_end_hour
+    settings.send_start_hour = send_start_hour
+    settings.send_end_hour = send_end_hour
+    settings.join_delay_min = join_delay_min
+    settings.join_delay_max = join_delay_max
+    settings.send_delay_min = send_delay_min
+    settings.send_delay_max = send_delay_max
+    settings.wait_before_send_hours = wait_before_send_hours
+    settings.auto_leave_enabled = auto_leave_enabled
+    settings.leave_after_days = leave_after_days
+
+    await db.commit()
+    return {"status": "updated"}
+
+
+@app.post("/api/auto/start")
+async def start_auto_mode(
+    phone: str = Form(...),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Запустить автоматический режим"""
+    # Обновляем флаг в настройках
+    stmt = select(BotSettings).limit(1)
+    settings = (await db.execute(stmt)).scalar_one_or_none()
+    if settings:
+        settings.auto_mode_enabled = True
+        await db.commit()
+
+    result = await auto_worker.start(phone)
+    return result
+
+
+@app.post("/api/auto/stop")
+async def stop_auto_mode(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Остановить автоматический режим"""
+    stmt = select(BotSettings).limit(1)
+    settings = (await db.execute(stmt)).scalar_one_or_none()
+    if settings:
+        settings.auto_mode_enabled = False
+        await db.commit()
+
+    result = await auto_worker.stop()
+    return result
+
+
+@app.get("/api/auto/status")
+async def get_auto_status(user=Depends(get_current_user)):
+    """Получить статус автоматического режима"""
+    return await auto_worker.get_status()
+
+
+@app.get("/api/daily-stats")
+async def get_daily_stats_api(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить статистику за сегодня"""
+    from datetime import date
+    today = date.today()
+
+    stmt = select(DailyStats).where(DailyStats.date == today)
+    stats = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not stats:
+        return {
+            "date": today.isoformat(),
+            "joins_count": 0,
+            "sends_count": 0,
+            "leaves_count": 0,
+            "total": 0
+        }
+
+    return {
+        "date": stats.date.isoformat(),
+        "joins_count": stats.joins_count,
+        "sends_count": stats.sends_count,
+        "leaves_count": stats.leaves_count,
+        "total": stats.joins_count + stats.sends_count
+    }
+
+
+# ========== Group Approval Endpoints ==========
+
+@app.post("/api/groups/approve")
+async def approve_groups(
+    group_ids: str = Form(...),  # comma-separated IDs
+    approved: bool = Form(True),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Одобрить/снять одобрение для групп"""
+    ids = [int(x.strip()) for x in group_ids.split(",") if x.strip()]
+
+    for group_id in ids:
+        stmt = select(Group).where(Group.id == group_id)
+        group = (await db.execute(stmt)).scalar_one_or_none()
+        if group:
+            group.approved = approved
+
+    await db.commit()
+    return {"status": "updated", "count": len(ids)}
+
+
+@app.post("/api/groups/approve-all")
+async def approve_all_groups(
+    filter: str = Form("pending"),  # pending, joined, all
+    approved: bool = Form(True),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Одобрить все группы по фильтру"""
+    stmt = select(Group)
+
+    if filter == "pending":
+        stmt = stmt.where(Group.status == "pending")
+    elif filter == "joined":
+        stmt = stmt.where(Group.status == "joined")
+
+    groups = (await db.execute(stmt)).scalars().all()
+
+    for group in groups:
+        group.approved = approved
+
+    await db.commit()
+    return {"status": "updated", "count": len(groups)}
 
 
 if __name__ == "__main__":
