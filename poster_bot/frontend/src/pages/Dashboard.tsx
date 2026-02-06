@@ -18,11 +18,8 @@ interface GroupStats {
   joining: number;
   joined: number;
   failed: number;
+  left: number;
   total: number;
-  approved: number;
-  approved_pending: number;
-  approved_joined: number;
-}
 }
 
 interface JoiningStatus {
@@ -60,7 +57,6 @@ interface Group {
   join_error: string | null;
   join_attempts: number;
   source: string;
-  approved: boolean;
   can_leave: boolean;
 }
 
@@ -113,6 +109,34 @@ interface MessageGroup {
   message_link: string | null;
   error: string | null;
   sent_at: string | null;
+}
+
+// Группа для модального окна выбора (включает все группы)
+interface TargetGroup {
+  id: number;
+  title: string;
+  link: string;
+  city: string | null;
+  address: string | null;
+  group_status: string;  // pending, joined, failed, left
+  included: boolean;
+  send_status: string | null;
+  send_error: string | null;
+  sent_at: string | null;
+  message_link: string | null;
+}
+
+interface TargetsStats {
+  total_included: number;
+  stats: {
+    pending: number;
+    waiting: number;
+    sending: number;
+    sent: number;
+    failed: number;
+  };
+  need_join: number;
+  waiting_to_send: number;
 }
 
 interface SendingStatus {
@@ -226,6 +250,14 @@ function Dashboard({ onLogout }: DashboardProps) {
   const [messageSendLoading, setMessageSendLoading] = useState(false);
   const [messageFilter, setMessageFilter] = useState('all'); // all, not_sent, sent, failed
 
+  // Modal for group selection
+  const [showGroupsModal, setShowGroupsModal] = useState(false);
+  const [modalGroups, setModalGroups] = useState<TargetGroup[]>([]);
+  const [modalSelectedIds, setModalSelectedIds] = useState<Set<number>>(new Set());
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalSearchQuery, setModalSearchQuery] = useState('');
+  const [targetsStats, setTargetsStats] = useState<TargetsStats | null>(null);
+
   // Join settings
   const [joinLimit, setJoinLimit] = useState(20);
   const [joinDelayMin, setJoinDelayMin] = useState(30);
@@ -316,6 +348,15 @@ function Dashboard({ onLogout }: DashboardProps) {
     try {
       const res = await api.get(`/api/messages/${messageId}/sending-status`);
       setSendingStatus(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadTargetsStats = useCallback(async (messageId: number) => {
+    try {
+      const res = await api.get(`/api/messages/${messageId}/targets-stats`);
+      setTargetsStats(res.data);
     } catch (e) {
       console.error(e);
     }
@@ -516,31 +557,77 @@ function Dashboard({ onLogout }: DashboardProps) {
     }
   };
 
-  // Approve groups handler
-  const handleApproveGroups = async (groupIds: number[], approved: boolean) => {
+  // Open modal for group selection
+  const handleOpenGroupsModal = async (msg: Message) => {
+    setShowGroupsModal(true);
+    setModalLoading(true);
+    setModalSearchQuery('');
+
     try {
-      const formData = new FormData();
-      formData.append('group_ids', groupIds.join(','));
-      formData.append('approved', String(approved));
-      await api.post('/api/groups/approve', formData);
-      loadGroups();
-      loadGroupStats();
+      const res = await api.get(`/api/messages/${msg.id}/all-groups`);
+      const groups: TargetGroup[] = res.data;
+      setModalGroups(groups);
+
+      // Set initially selected (included) groups
+      const includedIds = new Set(groups.filter(g => g.included).map(g => g.id));
+      setModalSelectedIds(includedIds);
+
+      // Load stats
+      await loadTargetsStats(msg.id);
     } catch (e) {
       console.error(e);
+    } finally {
+      setModalLoading(false);
     }
   };
 
-  const handleApproveAllGroups = async (filter: string, approved: boolean) => {
+  // Save modal selection
+  const handleSaveGroupSelection = async () => {
+    if (!selectedMessage) return;
+
+    setModalLoading(true);
     try {
       const formData = new FormData();
-      formData.append('filter', filter);
-      formData.append('approved', String(approved));
-      await api.post('/api/groups/approve-all', formData);
-      loadGroups();
-      loadGroupStats();
+      formData.append('group_ids', Array.from(modalSelectedIds).join(','));
+
+      await api.post(`/api/messages/${selectedMessage.id}/targets`, formData);
+      await loadTargetsStats(selectedMessage.id);
+      await loadMessages();
+      setShowGroupsModal(false);
     } catch (e) {
       console.error(e);
+      alert('Ошибка сохранения');
+    } finally {
+      setModalLoading(false);
     }
+  };
+
+  // Modal select helpers
+  const handleModalSelectAll = () => {
+    const filtered = getFilteredModalGroups();
+    const newIds = new Set(modalSelectedIds);
+    filtered.forEach(g => newIds.add(g.id));
+    setModalSelectedIds(newIds);
+  };
+
+  const handleModalDeselectAll = () => {
+    const filtered = getFilteredModalGroups();
+    const filteredIds = new Set(filtered.map(g => g.id));
+    const newIds = new Set(Array.from(modalSelectedIds).filter(id => !filteredIds.has(id)));
+    setModalSelectedIds(newIds);
+  };
+
+  const getFilteredModalGroups = () => {
+    return modalGroups.filter(g => {
+      if (modalSearchQuery) {
+        const q = modalSearchQuery.toLowerCase();
+        return g.title?.toLowerCase().includes(q) ||
+               g.link.toLowerCase().includes(q) ||
+               g.city?.toLowerCase().includes(q) ||
+               g.address?.toLowerCase().includes(q);
+      }
+      return true;
+    });
   };
 
   // Save settings handler
@@ -678,6 +765,7 @@ function Dashboard({ onLogout }: DashboardProps) {
     setMessageSelectedGroups([]);
     await loadMessageGroups(msg.id);
     await loadSendingStatus(msg.id);
+    await loadTargetsStats(msg.id);
   };
 
   const handleDeleteMessage = async (messageId: number) => {
@@ -1153,7 +1241,7 @@ function Dashboard({ onLogout }: DashboardProps) {
 
             {/* Groups List */}
             <div className="card">
-              <h2>Список групп ({groups.length}) {groupStats?.approved ? `| Одобрено: ${groupStats.approved}` : ''}</h2>
+              <h2>Список групп ({groups.length})</h2>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
                 <button className={`nav-tab ${groupFilter === 'all' ? 'active' : ''}`} onClick={() => { setGroupFilter('all'); loadGroups(); }}>
                   Все
@@ -1167,48 +1255,31 @@ function Dashboard({ onLogout }: DashboardProps) {
                 <button className={`nav-tab ${groupFilter === 'failed' ? 'active' : ''}`} onClick={() => { setGroupFilter('failed'); loadGroups('failed'); }}>
                   Ошибки
                 </button>
-                <button className={`nav-tab ${groupFilter === 'approved' ? 'active' : ''}`} onClick={() => { setGroupFilter('approved'); loadGroups('approved'); }}>
-                  Одобренные
+                <button className={`nav-tab ${groupFilter === 'left' ? 'active' : ''}`} onClick={() => { setGroupFilter('left'); loadGroups('left'); }}>
+                  Вышли
                 </button>
               </div>
 
-              {/* Bulk approve buttons */}
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
-                <button className="btn btn-success" style={{ padding: '6px 12px' }} onClick={() => handleApproveAllGroups('pending', true)}>
-                  Одобрить все pending
-                </button>
-                <button className="btn" style={{ padding: '6px 12px' }} onClick={() => handleApproveAllGroups('joined', true)}>
-                  Одобрить все joined
-                </button>
-                <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={() => handleApproveAllGroups('all', false)}>
-                  Снять все одобрения
-                </button>
-              </div>
+              <p style={{ marginBottom: '15px', color: 'var(--text-muted)', fontSize: '14px' }}>
+                Выбор групп для рассылки осуществляется в разделе "Сообщения" → выберите сообщение → "Выбрать группы"
+              </p>
 
               <div className="groups-list" style={{ maxHeight: '500px', overflowY: 'auto' }}>
                 {groups.map((group) => (
-                  <div key={group.id} className="group-item" style={{ background: group.approved ? 'rgba(34, 197, 94, 0.1)' : undefined }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <input
-                        type="checkbox"
-                        checked={group.approved}
-                        onChange={(e) => handleApproveGroups([group.id], e.target.checked)}
-                        title="Одобрить для автопостинга"
-                      />
-                      <div style={{ flex: 1 }}>
-                        <div className="title">
-                          <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)', textDecoration: 'none' }}>
-                            {group.title || group.address || group.link}
-                          </a>
-                          {group.city && <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>({group.city})</span>}
-                        </div>
-                        <div className="id">
-                          {group.address && `${group.address} | `}
-                          {group.telegram_id && `ID: ${group.telegram_id} | `}
-                          {group.source === 'excel' ? 'Excel' : 'Вручную'}
-                          {group.can_leave && <span style={{ color: 'var(--warning)' }}> | Можно выйти</span>}
-                          {group.join_error && <span style={{ color: 'var(--error)' }}> | {group.join_error}</span>}
-                        </div>
+                  <div key={group.id} className="group-item">
+                    <div style={{ flex: 1 }}>
+                      <div className="title">
+                        <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)', textDecoration: 'none' }}>
+                          {group.title || group.address || group.link}
+                        </a>
+                        {group.city && <span style={{ color: 'var(--text-muted)', marginLeft: '8px' }}>({group.city})</span>}
+                      </div>
+                      <div className="id">
+                        {group.address && `${group.address} | `}
+                        {group.telegram_id && `ID: ${group.telegram_id} | `}
+                        {group.source === 'excel' ? 'Excel' : 'Вручную'}
+                        {group.can_leave && <span style={{ color: 'var(--warning)' }}> | Можно выйти</span>}
+                        {group.join_error && <span style={{ color: 'var(--error)' }}> | {group.join_error}</span>}
                       </div>
                     </div>
                     <span className={`status status-${group.status}`}>{group.status}</span>
@@ -1301,17 +1372,48 @@ function Dashboard({ onLogout }: DashboardProps) {
             {/* Selected Message - Send to Groups */}
             {selectedMessage && (
               <div className="card">
-                <h2>Отправка: {selectedMessage.name}</h2>
+                <h2>Сообщение: {selectedMessage.name}</h2>
 
-                {/* Sending Status */}
-                {sendingStatus && (
-                  <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--panel-card)', borderRadius: '8px' }}>
-                    <div style={{ display: 'flex', gap: '20px', marginBottom: '10px' }}>
-                      <span>Отправлено: <strong style={{ color: 'var(--success)' }}>{sendingStatus.stats.sent}</strong></span>
-                      <span>Ошибок: <strong style={{ color: 'var(--error)' }}>{sendingStatus.stats.failed}</strong></span>
-                      <span>Ожидает: <strong style={{ color: 'var(--warning)' }}>{sendingStatus.stats.pending}</strong></span>
-                      {sendingStatus.is_sending && <span style={{ color: 'var(--info)' }}>Идёт отправка...</span>}
+                {/* Button to open group selection modal */}
+                <div style={{ marginBottom: '15px' }}>
+                  <button
+                    className="btn btn-success"
+                    onClick={() => handleOpenGroupsModal(selectedMessage)}
+                    style={{ marginRight: '10px' }}
+                  >
+                    Выбрать группы для рассылки
+                  </button>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Выбрано групп: <strong>{targetsStats?.total_included || 0}</strong>
+                  </span>
+                </div>
+
+                {/* Targets Stats */}
+                {targetsStats && targetsStats.total_included > 0 && (
+                  <div className="stats-grid" style={{ marginBottom: '15px' }}>
+                    <div className="stat-card" style={{ padding: '12px' }}>
+                      <div className="value" style={{ fontSize: '20px', color: 'var(--info)' }}>{targetsStats.need_join}</div>
+                      <div className="label">Нужно вступить</div>
                     </div>
+                    <div className="stat-card" style={{ padding: '12px' }}>
+                      <div className="value" style={{ fontSize: '20px', color: 'var(--warning)' }}>{targetsStats.stats.waiting}</div>
+                      <div className="label">Ждут отправки</div>
+                    </div>
+                    <div className="stat-card" style={{ padding: '12px' }}>
+                      <div className="value" style={{ fontSize: '20px', color: 'var(--success)' }}>{targetsStats.stats.sent}</div>
+                      <div className="label">Отправлено</div>
+                    </div>
+                    <div className="stat-card" style={{ padding: '12px' }}>
+                      <div className="value" style={{ fontSize: '20px', color: 'var(--error)' }}>{targetsStats.stats.failed}</div>
+                      <div className="label">Ошибки</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sending Status (for manual sends) */}
+                {sendingStatus && sendingStatus.is_sending && (
+                  <div style={{ marginBottom: '15px', padding: '10px', background: 'var(--info-bg)', borderRadius: '8px' }}>
+                    <span style={{ color: 'var(--info)' }}>Идёт отправка...</span>
                   </div>
                 )}
 
@@ -1760,6 +1862,168 @@ function Dashboard({ onLogout }: DashboardProps) {
           </>
         )}
       </div>
+
+      {/* Modal for Group Selection */}
+      {showGroupsModal && selectedMessage && (
+        <div className="modal-overlay" style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div className="modal-content" style={{
+            background: 'var(--panel-bg)',
+            borderRadius: '12px',
+            padding: '20px',
+            width: '90%',
+            maxWidth: '900px',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+              <h2 style={{ margin: 0 }}>Выбор групп для: {selectedMessage.name}</h2>
+              <button
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px' }}
+                onClick={() => setShowGroupsModal(false)}
+              >
+                X
+              </button>
+            </div>
+
+            {modalLoading ? (
+              <div style={{ padding: '40px', textAlign: 'center' }}>Загрузка...</div>
+            ) : (
+              <>
+                {/* Search and actions */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="Поиск по городу, названию..."
+                    value={modalSearchQuery}
+                    onChange={(e) => setModalSearchQuery(e.target.value)}
+                    style={{ flex: 1, minWidth: '200px' }}
+                  />
+                  <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={handleModalSelectAll}>
+                    Выбрать все
+                  </button>
+                  <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={handleModalDeselectAll}>
+                    Снять все
+                  </button>
+                </div>
+
+                <div style={{ marginBottom: '10px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                  <span>Всего групп: <strong>{modalGroups.length}</strong></span>
+                  <span>Выбрано: <strong style={{ color: 'var(--success)' }}>{modalSelectedIds.size}</strong></span>
+                  <span>Показано: <strong>{getFilteredModalGroups().length}</strong></span>
+                </div>
+
+                {/* Groups list */}
+                <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--panel-border)', borderRadius: '8px' }}>
+                  <table className="table" style={{ marginBottom: 0 }}>
+                    <thead style={{ position: 'sticky', top: 0, background: 'var(--panel-bg)' }}>
+                      <tr>
+                        <th style={{ width: '40px' }}></th>
+                        <th>Группа</th>
+                        <th style={{ width: '100px' }}>Статус группы</th>
+                        <th style={{ width: '120px' }}>Статус отправки</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getFilteredModalGroups().map((g) => (
+                        <tr
+                          key={g.id}
+                          style={{
+                            background: modalSelectedIds.has(g.id)
+                              ? 'rgba(34, 197, 94, 0.1)'
+                              : g.send_status === 'sent'
+                                ? 'rgba(34, 197, 94, 0.05)'
+                                : undefined
+                          }}
+                        >
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={modalSelectedIds.has(g.id)}
+                              disabled={g.send_status === 'sent' || g.send_status === 'sending'}
+                              onChange={(e) => {
+                                const newIds = new Set(modalSelectedIds);
+                                if (e.target.checked) {
+                                  newIds.add(g.id);
+                                } else {
+                                  newIds.delete(g.id);
+                                }
+                                setModalSelectedIds(newIds);
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <div>
+                              <a href={g.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary-light)' }}>
+                                {g.title}
+                              </a>
+                            </div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                              {g.city && `${g.city} | `}{g.address}
+                            </div>
+                          </td>
+                          <td>
+                            <span className={`status status-${g.group_status}`}>{g.group_status}</span>
+                          </td>
+                          <td>
+                            {g.send_status === 'sent' && (
+                              <span style={{ color: 'var(--success)' }}>Отправлено</span>
+                            )}
+                            {g.send_status === 'waiting' && (
+                              <span style={{ color: 'var(--warning)' }}>Ждёт</span>
+                            )}
+                            {g.send_status === 'sending' && (
+                              <span style={{ color: 'var(--info)' }}>Отправка...</span>
+                            )}
+                            {g.send_status === 'failed' && (
+                              <span style={{ color: 'var(--error)' }} title={g.send_error || ''}>Ошибка</span>
+                            )}
+                            {g.send_status === 'pending' && (
+                              <span style={{ color: 'var(--text-muted)' }}>Ожидает</span>
+                            )}
+                            {!g.send_status && (
+                              <span style={{ color: 'var(--text-muted)' }}>—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Save button */}
+                <div style={{ marginTop: '15px', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowGroupsModal(false)}
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    className="btn btn-success"
+                    onClick={handleSaveGroupSelection}
+                    disabled={modalLoading}
+                  >
+                    {modalLoading ? 'Сохранение...' : `Сохранить (${modalSelectedIds.size} групп)`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

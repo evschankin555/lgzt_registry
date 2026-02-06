@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db, init_db
-from models import TelegramAccount, Group, Post, PostResult, Message, MessageSend, BotSettings, DailyStats
+from models import TelegramAccount, Group, Post, PostResult, Message, MessageTarget, BotSettings, DailyStats
 from auth import (
     Token, LoginRequest, create_access_token, authenticate, get_current_user
 )
@@ -301,7 +301,7 @@ async def join_group(
 
 @app.get("/api/groups")
 async def get_groups(
-    filter: Optional[str] = Query(None),  # all, joined, pending, failed, approved
+    filter: Optional[str] = Query(None),  # all, joined, pending, failed, left
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -313,10 +313,8 @@ async def get_groups(
         stmt = stmt.where(Group.status == "pending")
     elif filter == "failed":
         stmt = stmt.where(Group.status == "failed")
-    elif filter == "approved":
-        stmt = stmt.where(Group.approved == True)
-    elif filter == "not_approved":
-        stmt = stmt.where(Group.approved == False)
+    elif filter == "left":
+        stmt = stmt.where(Group.status == "left")
 
     stmt = stmt.order_by(Group.added_at.desc())
     result = await db.execute(stmt)
@@ -335,7 +333,6 @@ async def get_groups(
             "join_error": g.join_error,
             "join_attempts": g.join_attempts,
             "source": g.source,
-            "approved": g.approved,
             "can_leave": g.can_leave,
             "added_at": g.added_at.isoformat(),
             "joined_at": g.joined_at.isoformat() if g.joined_at else None,
@@ -352,30 +349,12 @@ async def get_groups_stats(
 ):
     """Статистика по группам"""
     stats = {}
-    for status in ["pending", "joining", "joined", "failed"]:
+    for status in ["pending", "joining", "joined", "failed", "left"]:
         stmt = select(func.count(Group.id)).where(Group.status == status)
         stats[status] = (await db.execute(stmt)).scalar() or 0
 
     stmt = select(func.count(Group.id))
     stats["total"] = (await db.execute(stmt)).scalar() or 0
-
-    # Одобренные
-    stmt = select(func.count(Group.id)).where(Group.approved == True)
-    stats["approved"] = (await db.execute(stmt)).scalar() or 0
-
-    # Одобренные и pending (готовы к вступлению)
-    stmt = select(func.count(Group.id)).where(
-        Group.approved == True,
-        Group.status == "pending"
-    )
-    stats["approved_pending"] = (await db.execute(stmt)).scalar() or 0
-
-    # Одобренные и joined (готовы к рассылке)
-    stmt = select(func.count(Group.id)).where(
-        Group.approved == True,
-        Group.status == "joined"
-    )
-    stats["approved_joined"] = (await db.execute(stmt)).scalar() or 0
 
     return stats
 
@@ -513,7 +492,7 @@ async def send_post(
         post_result = PostResult(
             post_id=post.id,
             group_id=group.id,
-            status="sending"
+            send_status="sending"
         )
         db.add(post_result)
         await db.commit()
@@ -729,18 +708,18 @@ async def get_messages(
     messages_data = []
     for m in messages:
         # Считаем статистику отправок
-        stmt = select(func.count(MessageSend.id)).where(MessageSend.message_id == m.id)
+        stmt = select(func.count(MessageTarget.id)).where(MessageTarget.message_id == m.id)
         total = (await db.execute(stmt)).scalar() or 0
 
-        stmt = select(func.count(MessageSend.id)).where(
-            MessageSend.message_id == m.id,
-            MessageSend.status == "sent"
+        stmt = select(func.count(MessageTarget.id)).where(
+            MessageTarget.message_id == m.id,
+            MessageTarget.send_status == "sent"
         )
         sent = (await db.execute(stmt)).scalar() or 0
 
-        stmt = select(func.count(MessageSend.id)).where(
-            MessageSend.message_id == m.id,
-            MessageSend.status == "failed"
+        stmt = select(func.count(MessageTarget.id)).where(
+            MessageTarget.message_id == m.id,
+            MessageTarget.send_status == "failed"
         )
         failed = (await db.execute(stmt)).scalar() or 0
 
@@ -776,7 +755,7 @@ async def get_message(
         raise HTTPException(status_code=404, detail="Message not found")
 
     # Получаем все отправки
-    stmt = select(MessageSend).where(MessageSend.message_id == message_id)
+    stmt = select(MessageTarget).where(MessageTarget.message_id == message_id)
     sends = (await db.execute(stmt)).scalars().all()
 
     sends_data = []
@@ -789,8 +768,10 @@ async def get_message(
             "group_id": s.group_id,
             "group_title": group.title if group else "Unknown",
             "group_link": group.link if group else None,
-            "status": s.status,
-            "error": s.error_message,
+            "group_status": group.status if group else None,
+            "included": s.included,
+            "status": s.send_status,
+            "error": s.send_error,
             "message_link": s.message_link,
             "sent_at": s.sent_at.isoformat() if s.sent_at else None
         })
@@ -841,7 +822,7 @@ async def get_message_groups(
     groups = (await db.execute(stmt)).scalars().all()
 
     # Получаем отправки для этого сообщения
-    stmt = select(MessageSend).where(MessageSend.message_id == message_id)
+    stmt = select(MessageTarget).where(MessageTarget.message_id == message_id)
     sends = (await db.execute(stmt)).scalars().all()
     sends_map = {s.group_id: s for s in sends}
 
@@ -854,9 +835,9 @@ async def get_message_groups(
             "link": g.link,
             "city": g.city,
             "address": g.address,
-            "send_status": send.status if send else None,
+            "send_status": send.send_status if send else None,
             "message_link": send.message_link if send else None,
-            "error": send.error_message if send else None,
+            "error": send.send_error if send else None,
             "sent_at": send.sent_at.isoformat() if send and send.sent_at else None
         })
 
@@ -911,23 +892,23 @@ async def send_message_to_groups(
             continue
 
         # Проверяем есть ли уже отправка
-        stmt = select(MessageSend).where(
-            MessageSend.message_id == message_id,
-            MessageSend.group_id == group_id
+        stmt = select(MessageTarget).where(
+            MessageTarget.message_id == message_id,
+            MessageTarget.group_id == group_id
         )
         existing = (await db.execute(stmt)).scalar_one_or_none()
 
         if existing:
             # Обновляем существующую
             send = existing
-            send.status = "sending"
-            send.error_message = None
+            send.send_status = "sending"
+            send.send_error = None
         else:
             # Создаем новую
-            send = MessageSend(
+            send = MessageTarget(
                 message_id=message_id,
                 group_id=group_id,
-                status="sending"
+                send_status="sending"
             )
             db.add(send)
 
@@ -943,7 +924,7 @@ async def send_message_to_groups(
         )
 
         if send_result["status"] == "success":
-            send.status = "sent"
+            send.send_status = "sent"
             send.sent_at = datetime.utcnow()
 
             if "message_id" in send_result:
@@ -953,8 +934,8 @@ async def send_message_to_groups(
 
             success_count += 1
         else:
-            send.status = "failed"
-            send.error_message = send_result.get("message", "Unknown error")
+            send.send_status = "failed"
+            send.send_error = send_result.get("message", "Unknown error")
             fail_count += 1
 
         await db.commit()
@@ -963,8 +944,8 @@ async def send_message_to_groups(
             "group_id": group.id,
             "group_title": group.title,
             "group_link": group.link,
-            "status": send.status,
-            "error": send.error_message,
+            "status": send.send_status,
+            "error": send.send_error,
             "message_link": send.message_link
         })
 
@@ -994,19 +975,19 @@ async def get_sending_status(
         raise HTTPException(status_code=404, detail="Message not found")
 
     # Статистика
-    stmt = select(MessageSend).where(MessageSend.message_id == message_id)
+    stmt = select(MessageTarget).where(MessageTarget.message_id == message_id)
     sends = (await db.execute(stmt)).scalars().all()
 
-    stats = {"pending": 0, "sending": 0, "sent": 0, "failed": 0}
+    stats = {"pending": 0, "waiting": 0, "sending": 0, "sent": 0, "failed": 0}
     latest_sends = []
 
     for s in sends:
-        stats[s.status] = stats.get(s.status, 0) + 1
+        stats[s.send_status] = stats.get(s.send_status, 0) + 1
 
     # Последние 10 отправок
-    stmt = select(MessageSend).where(
-        MessageSend.message_id == message_id
-    ).order_by(MessageSend.sent_at.desc()).limit(10)
+    stmt = select(MessageTarget).where(
+        MessageTarget.message_id == message_id
+    ).order_by(MessageTarget.sent_at.desc()).limit(10)
     recent = (await db.execute(stmt)).scalars().all()
 
     for s in recent:
@@ -1017,7 +998,7 @@ async def get_sending_status(
             "group_id": s.group_id,
             "group_title": group.title if group else "Unknown",
             "group_link": group.link if group else None,
-            "status": s.status,
+            "status": s.send_status,
             "message_link": s.message_link
         })
 
@@ -1184,50 +1165,165 @@ async def get_daily_stats_api(
     }
 
 
-# ========== Group Approval Endpoints ==========
+# ========== Message Targets (Per-Message Group Selection) ==========
 
-@app.post("/api/groups/approve")
-async def approve_groups(
-    group_ids: str = Form(...),  # comma-separated IDs
-    approved: bool = Form(True),
+@app.get("/api/messages/{message_id}/all-groups")
+async def get_all_groups_for_message(
+    message_id: int,
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Одобрить/снять одобрение для групп"""
-    ids = [int(x.strip()) for x in group_ids.split(",") if x.strip()]
+    """Получить ВСЕ группы со статусом включения для модального окна"""
+    # Проверяем сообщение
+    stmt = select(Message).where(Message.id == message_id)
+    message = (await db.execute(stmt)).scalar_one_or_none()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
 
-    for group_id in ids:
-        stmt = select(Group).where(Group.id == group_id)
-        group = (await db.execute(stmt)).scalar_one_or_none()
-        if group:
-            group.approved = approved
-
-    await db.commit()
-    return {"status": "updated", "count": len(ids)}
-
-
-@app.post("/api/groups/approve-all")
-async def approve_all_groups(
-    filter: str = Form("pending"),  # pending, joined, all
-    approved: bool = Form(True),
-    user=Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Одобрить все группы по фильтру"""
-    stmt = select(Group)
-
-    if filter == "pending":
-        stmt = stmt.where(Group.status == "pending")
-    elif filter == "joined":
-        stmt = stmt.where(Group.status == "joined")
-
+    # Получаем ВСЕ группы (не только joined)
+    stmt = select(Group).order_by(Group.city, Group.title, Group.link)
     groups = (await db.execute(stmt)).scalars().all()
 
-    for group in groups:
-        group.approved = approved
+    # Получаем существующие targets для этого сообщения
+    stmt = select(MessageTarget).where(MessageTarget.message_id == message_id)
+    targets = (await db.execute(stmt)).scalars().all()
+    targets_map = {t.group_id: t for t in targets}
+
+    groups_data = []
+    for g in groups:
+        target = targets_map.get(g.id)
+        groups_data.append({
+            "id": g.id,
+            "title": g.title or g.address or g.link,
+            "link": g.link,
+            "city": g.city,
+            "address": g.address,
+            "group_status": g.status,  # pending, joined, failed, left
+            "included": target.included if target else True,  # По умолчанию включена
+            "send_status": target.send_status if target else None,
+            "send_error": target.send_error if target else None,
+            "sent_at": target.sent_at.isoformat() if target and target.sent_at else None,
+            "message_link": target.message_link if target else None
+        })
+
+    return groups_data
+
+
+@app.post("/api/messages/{message_id}/targets")
+async def save_message_targets(
+    message_id: int,
+    group_ids: str = Form(...),  # comma-separated IDs включённых групп
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Сохранить выбор групп для сообщения (создать/обновить MessageTarget)"""
+    # Проверяем сообщение
+    stmt = select(Message).where(Message.id == message_id)
+    message = (await db.execute(stmt)).scalar_one_or_none()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Парсим выбранные группы
+    included_ids = set()
+    if group_ids.strip():
+        included_ids = {int(x.strip()) for x in group_ids.split(",") if x.strip()}
+
+    # Получаем все группы
+    stmt = select(Group)
+    all_groups = (await db.execute(stmt)).scalars().all()
+
+    # Получаем существующие targets
+    stmt = select(MessageTarget).where(MessageTarget.message_id == message_id)
+    existing_targets = (await db.execute(stmt)).scalars().all()
+    targets_map = {t.group_id: t for t in existing_targets}
+
+    created = 0
+    updated = 0
+
+    for group in all_groups:
+        should_include = group.id in included_ids
+        existing = targets_map.get(group.id)
+
+        if existing:
+            # Обновляем только если изменилось и ещё не отправлено
+            if existing.included != should_include and existing.send_status in ["pending", None]:
+                existing.included = should_include
+                updated += 1
+        else:
+            # Создаём новый target
+            target = MessageTarget(
+                message_id=message_id,
+                group_id=group.id,
+                included=should_include,
+                send_status="pending"
+            )
+            db.add(target)
+            created += 1
 
     await db.commit()
-    return {"status": "updated", "count": len(groups)}
+
+    return {
+        "status": "saved",
+        "created": created,
+        "updated": updated,
+        "total_included": len(included_ids)
+    }
+
+
+@app.get("/api/messages/{message_id}/targets-stats")
+async def get_message_targets_stats(
+    message_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Статистика targets для сообщения"""
+    from sqlalchemy import and_
+
+    # Всего включённых
+    stmt = select(func.count(MessageTarget.id)).where(
+        MessageTarget.message_id == message_id,
+        MessageTarget.included == True
+    )
+    total_included = (await db.execute(stmt)).scalar() or 0
+
+    # По статусам (только включённые)
+    stats = {}
+    for status in ["pending", "waiting", "sending", "sent", "failed"]:
+        stmt = select(func.count(MessageTarget.id)).where(
+            MessageTarget.message_id == message_id,
+            MessageTarget.included == True,
+            MessageTarget.send_status == status
+        )
+        stats[status] = (await db.execute(stmt)).scalar() or 0
+
+    # Сколько групп ещё не joined (нужно вступить)
+    stmt = select(func.count(MessageTarget.id)).join(Group).where(
+        and_(
+            MessageTarget.message_id == message_id,
+            MessageTarget.included == True,
+            MessageTarget.send_status == "pending",
+            Group.status == "pending"
+        )
+    )
+    need_join = (await db.execute(stmt)).scalar() or 0
+
+    # Сколько групп waiting (вступили, ждём перед отправкой)
+    stmt = select(func.count(MessageTarget.id)).join(Group).where(
+        and_(
+            MessageTarget.message_id == message_id,
+            MessageTarget.included == True,
+            MessageTarget.send_status == "waiting",
+            Group.status == "joined"
+        )
+    )
+    waiting_to_send = (await db.execute(stmt)).scalar() or 0
+
+    return {
+        "total_included": total_included,
+        "stats": stats,
+        "need_join": need_join,
+        "waiting_to_send": waiting_to_send
+    }
 
 
 if __name__ == "__main__":

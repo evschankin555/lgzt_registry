@@ -1,5 +1,6 @@
 """
 AutoWorker - автоматический постинг по расписанию
+Новая логика: работа с MessageTarget (целевые группы сообщения)
 """
 import asyncio
 import random
@@ -9,7 +10,7 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import async_session
-from models import Group, Message, MessageSend, DailyStats, BotSettings
+from models import Group, Message, MessageTarget, DailyStats, BotSettings
 import telegram_client as tg
 
 
@@ -176,7 +177,7 @@ class AutoWorker:
                 await asyncio.sleep(30)
 
     async def _do_joins(self, settings: BotSettings):
-        """Вступление в группы"""
+        """Вступление в группы из активного сообщения"""
         if not await self._can_do_action():
             self.status["current_action"] = "Дневной лимит достигнут"
             await asyncio.sleep(60)
@@ -187,20 +188,34 @@ class AutoWorker:
             await asyncio.sleep(60)
             return
 
+        if not settings.active_message_id:
+            self.status["current_action"] = "Нет активного сообщения"
+            await asyncio.sleep(60)
+            return
+
         async with async_session() as db:
-            # Берём одобренную группу для вступления
-            stmt = select(Group).where(
+            # Ищем MessageTarget с included=True, где группа ещё не joined
+            stmt = select(MessageTarget).join(Group).where(
                 and_(
-                    Group.approved == True,
+                    MessageTarget.message_id == settings.active_message_id,
+                    MessageTarget.included == True,
+                    MessageTarget.send_status == "pending",
                     Group.status == "pending"
                 )
-            ).order_by(Group.priority.desc(), Group.added_at).limit(1)
+            ).limit(1)
 
+            target = (await db.execute(stmt)).scalar_one_or_none()
+
+            if not target:
+                self.status["current_action"] = "Нет групп для вступления"
+                await asyncio.sleep(60)
+                return
+
+            # Получаем группу
+            stmt = select(Group).where(Group.id == target.group_id)
             group = (await db.execute(stmt)).scalar_one_or_none()
 
             if not group:
-                self.status["current_action"] = "Нет групп для вступления"
-                await asyncio.sleep(60)
                 return
 
             # Вступаем
@@ -219,11 +234,15 @@ class AutoWorker:
                 group.telegram_id = str(result["group"].get("id", ""))
                 group.title = result["group"].get("title", "")
                 group.join_error = None
+                # Помечаем target как waiting (ждём перед отправкой)
+                target.send_status = "waiting"
                 await self._increment_stat("join")
                 print(f"AutoWorker: вступили в {group.title}")
             else:
                 group.status = "failed"
                 group.join_error = result.get("message", "Unknown error")
+                target.send_status = "failed"
+                target.send_error = group.join_error
                 print(f"AutoWorker: ошибка вступления {group.link}: {group.join_error}")
 
             await db.commit()
@@ -238,7 +257,7 @@ class AutoWorker:
             await asyncio.sleep(1)
 
     async def _do_sends(self, settings: BotSettings):
-        """Рассылка сообщений"""
+        """Рассылка сообщений в группы из активного сообщения"""
         if not await self._can_do_action():
             self.status["current_action"] = "Дневной лимит достигнут"
             await asyncio.sleep(60)
@@ -267,92 +286,79 @@ class AutoWorker:
             # Минимальное время после вступления
             min_joined_at = datetime.utcnow() - timedelta(hours=settings.wait_before_send_hours)
 
-            # Ищем группу для отправки:
-            # - одобрена
-            # - вступили
-            # - прошло достаточно времени после вступления
-            # - ещё не отправляли это сообщение
-            stmt = select(Group).where(
+            # Ищем MessageTarget с included=True, send_status=waiting, группа joined и прошло время
+            stmt = select(MessageTarget).join(Group).where(
                 and_(
-                    Group.approved == True,
+                    MessageTarget.message_id == settings.active_message_id,
+                    MessageTarget.included == True,
+                    MessageTarget.send_status == "waiting",
                     Group.status == "joined",
                     Group.joined_at != None,
                     Group.joined_at < min_joined_at
                 )
-            ).order_by(Group.priority.desc(), Group.joined_at)
+            ).limit(1)
 
-            groups = (await db.execute(stmt)).scalars().all()
+            target = (await db.execute(stmt)).scalar_one_or_none()
 
-            # Фильтруем группы где уже отправлено
-            target_group = None
-            for g in groups:
-                stmt = select(MessageSend).where(
+            if not target:
+                # Также проверяем группы где уже joined (если вступали вручную ранее)
+                stmt = select(MessageTarget).join(Group).where(
                     and_(
-                        MessageSend.message_id == message.id,
-                        MessageSend.group_id == g.id,
-                        MessageSend.status == "sent"
+                        MessageTarget.message_id == settings.active_message_id,
+                        MessageTarget.included == True,
+                        MessageTarget.send_status == "pending",
+                        Group.status == "joined",
+                        Group.joined_at != None,
+                        Group.joined_at < min_joined_at
                     )
-                )
-                existing = (await db.execute(stmt)).scalar_one_or_none()
-                if not existing:
-                    target_group = g
-                    break
+                ).limit(1)
+                target = (await db.execute(stmt)).scalar_one_or_none()
 
-            if not target_group:
+            if not target:
                 self.status["current_action"] = "Нет групп для отправки"
                 await asyncio.sleep(60)
                 return
 
-            # Создаём или обновляем запись отправки
-            stmt = select(MessageSend).where(
-                and_(
-                    MessageSend.message_id == message.id,
-                    MessageSend.group_id == target_group.id
-                )
-            )
-            send = (await db.execute(stmt)).scalar_one_or_none()
+            # Получаем группу
+            stmt = select(Group).where(Group.id == target.group_id)
+            group = (await db.execute(stmt)).scalar_one_or_none()
 
-            if not send:
-                send = MessageSend(
-                    message_id=message.id,
-                    group_id=target_group.id,
-                    status="sending"
-                )
-                db.add(send)
-            else:
-                send.status = "sending"
-                send.error_message = None
+            if not group or not group.telegram_id:
+                target.send_status = "failed"
+                target.send_error = "Группа не найдена или нет telegram_id"
+                await db.commit()
+                return
 
+            target.send_status = "sending"
             await db.commit()
-            await db.refresh(send)
 
-            self.status["current_action"] = f"Отправляем в: {target_group.title or target_group.link}"
+            self.status["current_action"] = f"Отправляем в: {group.title or group.link}"
 
             # Отправляем
             result = await tg.send_photo_to_group(
                 self.phone,
-                target_group.telegram_id,
+                group.telegram_id,
                 message.photo_path,
                 message.caption or ""
             )
 
             if result["status"] == "success":
-                send.status = "sent"
-                send.sent_at = datetime.utcnow()
+                target.send_status = "sent"
+                target.sent_at = datetime.utcnow()
                 if "message_id" in result:
-                    send.telegram_message_id = result["message_id"]
-                    chat_id = str(target_group.telegram_id).replace("-100", "")
-                    send.message_link = f"https://t.me/c/{chat_id}/{result['message_id']}"
+                    target.telegram_message_id = result["message_id"]
+                    chat_id = str(group.telegram_id).replace("-100", "")
+                    target.message_link = f"https://t.me/c/{chat_id}/{result['message_id']}"
 
                 # Помечаем группу что можно выходить
-                target_group.can_leave = True
+                group.can_leave = True
 
                 await self._increment_stat("send")
-                print(f"AutoWorker: отправлено в {target_group.title}")
+                print(f"AutoWorker: отправлено в {group.title}")
             else:
-                send.status = "failed"
-                send.error_message = result.get("message", "Unknown error")
-                print(f"AutoWorker: ошибка отправки в {target_group.title}: {send.error_message}")
+                target.send_status = "failed"
+                target.send_error = result.get("message", "Unknown error")
+                print(f"AutoWorker: ошибка отправки в {group.title}: {target.send_error}")
 
             await db.commit()
 
@@ -368,10 +374,15 @@ class AutoWorker:
     async def _check_leaves(self, settings: BotSettings):
         """Проверить нужно ли выйти из групп"""
         async with async_session() as db:
-            # Считаем сколько pending групп
-            stmt = select(func.count(Group.id)).where(
+            # Считаем сколько pending targets в активном сообщении
+            if not settings.active_message_id:
+                return
+
+            stmt = select(func.count(MessageTarget.id)).join(Group).where(
                 and_(
-                    Group.approved == True,
+                    MessageTarget.message_id == settings.active_message_id,
+                    MessageTarget.included == True,
+                    MessageTarget.send_status.in_(["pending", "waiting"]),
                     Group.status == "pending"
                 )
             )
@@ -387,9 +398,7 @@ class AutoWorker:
             if total_actions < settings.daily_limit:
                 return  # Лимит не достигнут
 
-            # Ищем группы для выхода (can_leave=True, отправка была давно)
-            leave_before = datetime.utcnow() - timedelta(days=settings.leave_after_days)
-
+            # Ищем группы для выхода (can_leave=True)
             stmt = select(Group).where(
                 and_(
                     Group.can_leave == True,

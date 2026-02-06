@@ -33,18 +33,16 @@ class Group(Base):
     city = Column(String(100), nullable=True)  # Город
     address = Column(String(255), nullable=True)  # Адрес
 
-    # Статус вступления
+    # Глобальный статус вступления (актуальное состояние в TG)
     status = Column(String(20), default="pending")  # pending, joining, joined, failed, left
     join_error = Column(Text, nullable=True)  # Текст ошибки если failed
     join_attempts = Column(Integer, default=0)  # Количество попыток входа
     last_attempt_at = Column(DateTime, nullable=True)  # Время последней попытки
     joined_at = Column(DateTime, nullable=True)  # Когда успешно вошли
 
-    # Для автоматической рассылки
-    approved = Column(Boolean, default=False)  # Одобрена для автопостинга
+    # Для авто-выхода
     can_leave = Column(Boolean, default=False)  # Можно выходить (успешно отправили)
     left_at = Column(DateTime, nullable=True)  # Когда вышли из группы
-    priority = Column(Integer, default=0)  # Приоритет (выше = раньше)
 
     # Источник
     source = Column(String(20), default="manual")  # manual, excel
@@ -112,40 +110,38 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Связь с результатами отправки
-    sends = relationship("MessageSend", back_populates="message", cascade="all, delete-orphan")
-
-    @property
-    def sent_count(self):
-        """Количество успешных отправок"""
-        return sum(1 for s in self.sends if s.status == "sent")
-
-    @property
-    def total_groups(self):
-        """Общее количество групп для отправки"""
-        return len(self.sends)
+    # Связь с целевыми группами
+    targets = relationship("MessageTarget", back_populates="message", cascade="all, delete-orphan")
 
 
-class MessageSend(Base):
-    """Отправка сообщения в конкретную группу"""
-    __tablename__ = "message_sends"
+class MessageTarget(Base):
+    """Целевая группа для сообщения - содержит статус вступления и отправки"""
+    __tablename__ = "message_targets"
 
     id = Column(Integer, primary_key=True)
     message_id = Column(Integer, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
 
-    status = Column(String(20), default="pending")  # pending, sending, sent, failed
-    error_message = Column(Text, nullable=True)
+    # Включена в рассылку (можно исключить вручную)
+    included = Column(Boolean, default=True)
+
+    # Статус отправки для этого сообщения
+    send_status = Column(String(20), default="pending")  # pending, waiting, sending, sent, failed
+    send_error = Column(Text, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
 
     # Результат отправки
     telegram_message_id = Column(Integer, nullable=True)  # ID сообщения в TG
     message_link = Column(String(255), nullable=True)  # Ссылка на пост
 
     created_at = Column(DateTime, default=datetime.utcnow)
-    sent_at = Column(DateTime, nullable=True)
 
-    message = relationship("Message", back_populates="sends")
+    message = relationship("Message", back_populates="targets")
     group = relationship("Group")
+
+
+# Legacy alias for compatibility
+MessageSend = MessageTarget
 
 
 class DailyStats(Base):
