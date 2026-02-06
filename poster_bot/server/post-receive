@@ -61,13 +61,21 @@ else
     log "WARNING: npm not found, skipping frontend build"
 fi
 
-# Nginx config
-log "Updating nginx config..."
-if [ -f $DEPLOY_PATH/deploy/nginx-poster-http.conf ]; then
-    cp $DEPLOY_PATH/deploy/nginx-poster-http.conf /etc/nginx/sites-available/poster-bot
-    ln -sf /etc/nginx/sites-available/poster-bot /etc/nginx/sites-enabled/
-    nginx -t 2>>$LOG_FILE && systemctl reload nginx
+# Nginx config - use SSL if certificate exists
+log "Updating nginx..."
+if [ -f /etc/letsencrypt/live/lgzt.developing-site.ru/fullchain.pem ]; then
+    # SSL certificate exists - use SSL config
+    if [ -f $DEPLOY_PATH/deploy/nginx-poster.conf ]; then
+        cp $DEPLOY_PATH/deploy/nginx-poster.conf /etc/nginx/sites-available/poster-bot
+    fi
+else
+    # No SSL yet - use HTTP config
+    if [ -f $DEPLOY_PATH/deploy/nginx-poster-http.conf ]; then
+        cp $DEPLOY_PATH/deploy/nginx-poster-http.conf /etc/nginx/sites-available/poster-bot
+    fi
 fi
+ln -sf /etc/nginx/sites-available/poster-bot /etc/nginx/sites-enabled/
+nginx -t 2>>$LOG_FILE && systemctl reload nginx
 
 # Systemd service
 log "Updating systemd service..."
