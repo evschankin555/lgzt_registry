@@ -1212,7 +1212,7 @@ async def get_all_groups_for_message(
 @app.post("/api/messages/{message_id}/targets")
 async def save_message_targets(
     message_id: int,
-    group_ids: str = Form(...),  # comma-separated IDs включённых групп
+    group_ids: str = Form(""),  # comma-separated IDs включённых групп (может быть пустой)
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
