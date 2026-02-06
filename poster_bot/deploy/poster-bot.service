@@ -1,0 +1,15 @@
+[Unit]
+Description=Poster Bot API
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/poster-bot/backend
+Environment="PATH=/var/www/poster-bot/backend/venv/bin"
+ExecStart=/var/www/poster-bot/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8002
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

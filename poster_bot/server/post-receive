@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# ===========================================
+# Poster Bot - Git Post-Receive Hook
+# ===========================================
+# Auto-deploy on git push
+
+set -e
+
+DEPLOY_PATH="/var/www/poster-bot"
+LOG_FILE="/var/log/poster-bot/deploy.log"
+BRANCH="main"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a $LOG_FILE
+}
+
+log "========== Deploy started =========="
+
+# Read pushed ref
+while read oldrev newrev refname; do
+    branch=$(git rev-parse --symbolic --abbrev-ref $refname)
+    log "Received push to branch: $branch"
+done
+
+# Checkout code
+log "Checking out code..."
+cd $DEPLOY_PATH
+GIT_DIR=$DEPLOY_PATH.git GIT_WORK_TREE=$DEPLOY_PATH git checkout -f main 2>>$LOG_FILE || \
+GIT_DIR=$DEPLOY_PATH.git GIT_WORK_TREE=$DEPLOY_PATH git checkout -f master 2>>$LOG_FILE
+
+# Backend setup
+log "Setting up backend..."
+cd $DEPLOY_PATH/backend
+
+# Activate venv and install deps
+source venv/bin/activate
+pip install -r requirements.txt -q 2>>$LOG_FILE
+
+# Copy .env if not exists
+if [ ! -f .env ]; then
+    if [ -f .env.example ]; then
+        cp .env.example .env
+        log "WARNING: Created .env from example - please configure!"
+    fi
+fi
+
+# Create data directories
+mkdir -p data/sessions data/uploads
+
+# Frontend build
+log "Building frontend..."
+cd $DEPLOY_PATH/frontend
+
+# Install and build
+if command -v npm &> /dev/null; then
+    npm install --silent 2>>$LOG_FILE
+    npm run build 2>>$LOG_FILE
+    log "Frontend built successfully"
+else
+    log "WARNING: npm not found, skipping frontend build"
+fi
+
+# Nginx config
+log "Updating nginx config..."
+if [ -f $DEPLOY_PATH/deploy/nginx-poster-http.conf ]; then
+    cp $DEPLOY_PATH/deploy/nginx-poster-http.conf /etc/nginx/sites-available/poster-bot
+    ln -sf /etc/nginx/sites-available/poster-bot /etc/nginx/sites-enabled/
+    nginx -t 2>>$LOG_FILE && systemctl reload nginx
+fi
+
+# Systemd service
+log "Updating systemd service..."
+if [ -f $DEPLOY_PATH/deploy/poster-bot.service ]; then
+    cp $DEPLOY_PATH/deploy/poster-bot.service /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable poster-bot
+fi
+
+# Restart service
+log "Restarting poster-bot service..."
+systemctl restart poster-bot
+
+# Check status
+sleep 2
+if systemctl is-active --quiet poster-bot; then
+    log "Service started successfully"
+else
+    log "ERROR: Service failed to start"
+    systemctl status poster-bot --no-pager >> $LOG_FILE 2>&1
+fi
+
+log "========== Deploy complete =========="
+echo ""
+echo "Deploy complete! Site: http://lgzt.developing-site.ru"
