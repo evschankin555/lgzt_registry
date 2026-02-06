@@ -668,7 +668,9 @@ function Dashboard({ onLogout }: DashboardProps) {
                   <div key={group.id} className="group-item">
                     <div style={{ flex: 1 }}>
                       <div className="title">
-                        {group.title || group.address || group.link}
+                        <a href={group.link} target="_blank" rel="noopener noreferrer" style={{ color: '#007bff', textDecoration: 'none' }}>
+                          {group.title || group.address || group.link}
+                        </a>
                         {group.city && <span style={{ color: '#666', marginLeft: '8px' }}>({group.city})</span>}
                       </div>
                       <div className="id">
