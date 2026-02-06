@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database import get_db, init_db
-from models import TelegramAccount, Group, Post, PostResult
+from models import TelegramAccount, Group, Post, PostResult, Message, MessageSend
 from auth import (
     Token, LoginRequest, create_access_token, authenticate, get_current_user
 )
@@ -637,6 +637,360 @@ async def get_stats(
         "groups_joined": joined_count,
         "posts": posts_count,
         "successful_sends": success_count
+    }
+
+
+# ========== Messages Endpoints (Фаза 1-2) ==========
+
+@app.post("/api/messages")
+async def create_message(
+    name: str = Form(""),
+    caption: str = Form(""),
+    photo: UploadFile = File(None),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Создать новое сообщение"""
+    photo_path = None
+
+    if photo:
+        file_ext = os.path.splitext(photo.filename)[1]
+        file_name = f"{uuid.uuid4()}{file_ext}"
+        photo_path = os.path.join("data", "uploads", file_name)
+
+        async with aiofiles.open(photo_path, "wb") as f:
+            content = await photo.read()
+            await f.write(content)
+
+    message = Message(
+        name=name or f"Сообщение {datetime.now().strftime('%d.%m %H:%M')}",
+        caption=caption,
+        photo_path=photo_path,
+        status="ready"
+    )
+    db.add(message)
+    await db.commit()
+    await db.refresh(message)
+
+    return {
+        "id": message.id,
+        "name": message.name,
+        "caption": message.caption,
+        "photo_path": message.photo_path,
+        "status": message.status
+    }
+
+
+@app.get("/api/messages")
+async def get_messages(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить список сообщений"""
+    stmt = select(Message).order_by(Message.created_at.desc())
+    result = await db.execute(stmt)
+    messages = result.scalars().all()
+
+    messages_data = []
+    for m in messages:
+        # Считаем статистику отправок
+        stmt = select(func.count(MessageSend.id)).where(MessageSend.message_id == m.id)
+        total = (await db.execute(stmt)).scalar() or 0
+
+        stmt = select(func.count(MessageSend.id)).where(
+            MessageSend.message_id == m.id,
+            MessageSend.status == "sent"
+        )
+        sent = (await db.execute(stmt)).scalar() or 0
+
+        stmt = select(func.count(MessageSend.id)).where(
+            MessageSend.message_id == m.id,
+            MessageSend.status == "failed"
+        )
+        failed = (await db.execute(stmt)).scalar() or 0
+
+        messages_data.append({
+            "id": m.id,
+            "name": m.name,
+            "caption": m.caption[:100] + "..." if m.caption and len(m.caption) > 100 else m.caption,
+            "photo_path": m.photo_path,
+            "status": m.status,
+            "created_at": m.created_at.isoformat(),
+            "stats": {
+                "total": total,
+                "sent": sent,
+                "failed": failed,
+                "pending": total - sent - failed
+            }
+        })
+
+    return messages_data
+
+
+@app.get("/api/messages/{message_id}")
+async def get_message(
+    message_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить сообщение с деталями отправок"""
+    stmt = select(Message).where(Message.id == message_id)
+    message = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Получаем все отправки
+    stmt = select(MessageSend).where(MessageSend.message_id == message_id)
+    sends = (await db.execute(stmt)).scalars().all()
+
+    sends_data = []
+    for s in sends:
+        stmt = select(Group).where(Group.id == s.group_id)
+        group = (await db.execute(stmt)).scalar_one_or_none()
+
+        sends_data.append({
+            "id": s.id,
+            "group_id": s.group_id,
+            "group_title": group.title if group else "Unknown",
+            "group_link": group.link if group else None,
+            "status": s.status,
+            "error": s.error_message,
+            "message_link": s.message_link,
+            "sent_at": s.sent_at.isoformat() if s.sent_at else None
+        })
+
+    return {
+        "id": message.id,
+        "name": message.name,
+        "caption": message.caption,
+        "photo_path": message.photo_path,
+        "status": message.status,
+        "created_at": message.created_at.isoformat(),
+        "sends": sends_data
+    }
+
+
+@app.delete("/api/messages/{message_id}")
+async def delete_message(
+    message_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Удалить сообщение"""
+    stmt = select(Message).where(Message.id == message_id)
+    message = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Удаляем фото если есть
+    if message.photo_path and os.path.exists(message.photo_path):
+        os.remove(message.photo_path)
+
+    await db.delete(message)
+    await db.commit()
+
+    return {"status": "deleted"}
+
+
+@app.get("/api/messages/{message_id}/groups")
+async def get_message_groups(
+    message_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить группы со статусом отправки для сообщения"""
+    # Получаем все joined группы
+    stmt = select(Group).where(Group.status == "joined").order_by(Group.title)
+    groups = (await db.execute(stmt)).scalars().all()
+
+    # Получаем отправки для этого сообщения
+    stmt = select(MessageSend).where(MessageSend.message_id == message_id)
+    sends = (await db.execute(stmt)).scalars().all()
+    sends_map = {s.group_id: s for s in sends}
+
+    groups_data = []
+    for g in groups:
+        send = sends_map.get(g.id)
+        groups_data.append({
+            "id": g.id,
+            "title": g.title or g.address or g.link,
+            "link": g.link,
+            "city": g.city,
+            "address": g.address,
+            "send_status": send.status if send else None,
+            "message_link": send.message_link if send else None,
+            "error": send.error_message if send else None,
+            "sent_at": send.sent_at.isoformat() if send and send.sent_at else None
+        })
+
+    return groups_data
+
+
+@app.post("/api/messages/{message_id}/send")
+async def send_message_to_groups(
+    message_id: int,
+    phone: str = Form(...),
+    group_ids: str = Form(...),
+    delay_seconds: int = Form(5),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Отправить сообщение в выбранные группы"""
+    import asyncio
+
+    # Получаем сообщение
+    stmt = select(Message).where(Message.id == message_id)
+    message = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    if not message.photo_path:
+        raise HTTPException(status_code=400, detail="Message has no photo")
+
+    group_id_list = [int(x.strip()) for x in group_ids.split(",") if x.strip()]
+
+    if not group_id_list:
+        raise HTTPException(status_code=400, detail="No groups selected")
+
+    # Обновляем статус сообщения
+    message.status = "sending"
+    await db.commit()
+
+    results = []
+    success_count = 0
+    fail_count = 0
+
+    for idx, group_id in enumerate(group_id_list):
+        # Задержка между отправками (кроме первой)
+        if idx > 0 and delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+
+        # Получаем группу
+        stmt = select(Group).where(Group.id == group_id)
+        group = (await db.execute(stmt)).scalar_one_or_none()
+
+        if not group or not group.telegram_id:
+            continue
+
+        # Проверяем есть ли уже отправка
+        stmt = select(MessageSend).where(
+            MessageSend.message_id == message_id,
+            MessageSend.group_id == group_id
+        )
+        existing = (await db.execute(stmt)).scalar_one_or_none()
+
+        if existing:
+            # Обновляем существующую
+            send = existing
+            send.status = "sending"
+            send.error_message = None
+        else:
+            # Создаем новую
+            send = MessageSend(
+                message_id=message_id,
+                group_id=group_id,
+                status="sending"
+            )
+            db.add(send)
+
+        await db.commit()
+        await db.refresh(send)
+
+        # Отправляем
+        send_result = await tg.send_photo_to_group(
+            phone,
+            group.telegram_id,
+            message.photo_path,
+            message.caption or ""
+        )
+
+        if send_result["status"] == "success":
+            send.status = "sent"
+            send.sent_at = datetime.utcnow()
+
+            if "message_id" in send_result:
+                send.telegram_message_id = send_result["message_id"]
+                chat_id = str(group.telegram_id).replace("-100", "")
+                send.message_link = f"https://t.me/c/{chat_id}/{send_result['message_id']}"
+
+            success_count += 1
+        else:
+            send.status = "failed"
+            send.error_message = send_result.get("message", "Unknown error")
+            fail_count += 1
+
+        await db.commit()
+
+        results.append({
+            "group_id": group.id,
+            "group_title": group.title,
+            "group_link": group.link,
+            "status": send.status,
+            "error": send.error_message,
+            "message_link": send.message_link
+        })
+
+    # Обновляем статус сообщения
+    message.status = "completed" if fail_count == 0 else "ready"
+    await db.commit()
+
+    return {
+        "status": "completed",
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "results": results
+    }
+
+
+@app.get("/api/messages/{message_id}/sending-status")
+async def get_sending_status(
+    message_id: int,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Получить текущий статус отправки (для polling)"""
+    stmt = select(Message).where(Message.id == message_id)
+    message = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    # Статистика
+    stmt = select(MessageSend).where(MessageSend.message_id == message_id)
+    sends = (await db.execute(stmt)).scalars().all()
+
+    stats = {"pending": 0, "sending": 0, "sent": 0, "failed": 0}
+    latest_sends = []
+
+    for s in sends:
+        stats[s.status] = stats.get(s.status, 0) + 1
+
+    # Последние 10 отправок
+    stmt = select(MessageSend).where(
+        MessageSend.message_id == message_id
+    ).order_by(MessageSend.sent_at.desc()).limit(10)
+    recent = (await db.execute(stmt)).scalars().all()
+
+    for s in recent:
+        stmt = select(Group).where(Group.id == s.group_id)
+        group = (await db.execute(stmt)).scalar_one_or_none()
+
+        latest_sends.append({
+            "group_id": s.group_id,
+            "group_title": group.title if group else "Unknown",
+            "group_link": group.link if group else None,
+            "status": s.status,
+            "message_link": s.message_link
+        })
+
+    return {
+        "message_status": message.status,
+        "stats": stats,
+        "is_sending": message.status == "sending",
+        "recent_sends": latest_sends
     }
 
 

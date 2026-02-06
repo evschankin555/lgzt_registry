@@ -80,6 +80,51 @@ interface PostDetail {
   }>;
 }
 
+interface Message {
+  id: number;
+  name: string;
+  caption: string | null;
+  photo_path: string | null;
+  status: string;
+  created_at: string;
+  stats: {
+    total: number;
+    sent: number;
+    failed: number;
+    pending: number;
+  };
+}
+
+interface MessageGroup {
+  id: number;
+  title: string;
+  link: string;
+  city: string | null;
+  address: string | null;
+  send_status: string | null;
+  message_link: string | null;
+  error: string | null;
+  sent_at: string | null;
+}
+
+interface SendingStatus {
+  message_status: string;
+  is_sending: boolean;
+  stats: {
+    pending: number;
+    sending: number;
+    sent: number;
+    failed: number;
+  };
+  recent_sends: Array<{
+    group_id: number;
+    group_title: string;
+    group_link: string;
+    status: string;
+    message_link: string | null;
+  }>;
+}
+
 function Dashboard({ onLogout }: DashboardProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [stats, setStats] = useState<Stats | null>(null);
@@ -116,6 +161,20 @@ function Dashboard({ onLogout }: DashboardProps) {
 
   // Post detail
   const [selectedPost, setSelectedPost] = useState<PostDetail | null>(null);
+
+  // Messages state (new)
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [messageGroups, setMessageGroups] = useState<MessageGroup[]>([]);
+  const [sendingStatus, setSendingStatus] = useState<SendingStatus | null>(null);
+  const [newMessageName, setNewMessageName] = useState('');
+  const [newMessageCaption, setNewMessageCaption] = useState('');
+  const [newMessagePhoto, setNewMessagePhoto] = useState<File | null>(null);
+  const [createMessageLoading, setCreateMessageLoading] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [messageSelectedGroups, setMessageSelectedGroups] = useState<number[]>([]);
+  const [messageSendLoading, setMessageSendLoading] = useState(false);
+  const [messageFilter, setMessageFilter] = useState('all'); // all, not_sent, sent, failed
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -174,6 +233,33 @@ function Dashboard({ onLogout }: DashboardProps) {
     }
   }, []);
 
+  const loadMessages = useCallback(async () => {
+    try {
+      const res = await api.get('/api/messages');
+      setMessages(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadMessageGroups = useCallback(async (messageId: number) => {
+    try {
+      const res = await api.get(`/api/messages/${messageId}/groups`);
+      setMessageGroups(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadSendingStatus = useCallback(async (messageId: number) => {
+    try {
+      const res = await api.get(`/api/messages/${messageId}/sending-status`);
+      setSendingStatus(res.data);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
   useEffect(() => {
     loadStats();
     loadGroupStats();
@@ -181,6 +267,7 @@ function Dashboard({ onLogout }: DashboardProps) {
     loadGroups();
     loadPosts();
     loadJoiningStatus();
+    loadMessages();
 
     // Polling for joining status
     const interval = setInterval(() => {
@@ -189,7 +276,19 @@ function Dashboard({ onLogout }: DashboardProps) {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [loadStats, loadGroupStats, loadAccounts, loadGroups, loadPosts, loadJoiningStatus]);
+  }, [loadStats, loadGroupStats, loadAccounts, loadGroups, loadPosts, loadJoiningStatus, loadMessages]);
+
+  // Polling for sending status when message is selected and sending
+  useEffect(() => {
+    if (!selectedMessage || !sendingStatus?.is_sending) return;
+
+    const interval = setInterval(() => {
+      loadSendingStatus(selectedMessage.id);
+      loadMessageGroups(selectedMessage.id);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [selectedMessage, sendingStatus?.is_sending, loadSendingStatus, loadMessageGroups]);
 
   // Phone auth handlers
   const handleSendCode = async () => {
@@ -359,6 +458,120 @@ function Dashboard({ onLogout }: DashboardProps) {
     setSelectedGroups([]);
   };
 
+  // === Message handlers ===
+
+  const handleCreateMessage = async () => {
+    if (!newMessagePhoto) {
+      alert('Выберите фото');
+      return;
+    }
+
+    setCreateMessageLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('name', newMessageName);
+      formData.append('caption', newMessageCaption);
+      formData.append('photo', newMessagePhoto);
+
+      await api.post('/api/messages', formData);
+      loadMessages();
+      setNewMessageName('');
+      setNewMessageCaption('');
+      setNewMessagePhoto(null);
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'Ошибка создания');
+    } finally {
+      setCreateMessageLoading(false);
+    }
+  };
+
+  const handleSelectMessage = async (msg: Message) => {
+    setSelectedMessage(msg);
+    setMessageSelectedGroups([]);
+    await loadMessageGroups(msg.id);
+    await loadSendingStatus(msg.id);
+  };
+
+  const handleDeleteMessage = async (messageId: number) => {
+    if (!confirm('Удалить сообщение?')) return;
+
+    try {
+      await api.delete(`/api/messages/${messageId}`);
+      loadMessages();
+      if (selectedMessage?.id === messageId) {
+        setSelectedMessage(null);
+        setMessageGroups([]);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!selectedMessage || messageSelectedGroups.length === 0) {
+      alert('Выберите группы');
+      return;
+    }
+
+    const acc = accounts.find(a => a.is_authorized);
+    if (!acc) {
+      alert('Нет авторизованного аккаунта');
+      return;
+    }
+
+    setMessageSendLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('phone', acc.phone);
+      formData.append('group_ids', messageSelectedGroups.join(','));
+      formData.append('delay_seconds', String(delaySeconds));
+
+      await api.post(`/api/messages/${selectedMessage.id}/send`, formData);
+      await loadMessageGroups(selectedMessage.id);
+      await loadSendingStatus(selectedMessage.id);
+      loadMessages();
+      setMessageSelectedGroups([]);
+    } catch (e: any) {
+      alert(e.response?.data?.detail || 'Ошибка отправки');
+    } finally {
+      setMessageSendLoading(false);
+    }
+  };
+
+  // Filter message groups
+  const filteredMessageGroups = messageGroups.filter(g => {
+    // Search filter
+    if (messageSearchQuery) {
+      const q = messageSearchQuery.toLowerCase();
+      if (!g.title?.toLowerCase().includes(q) &&
+          !g.link.toLowerCase().includes(q) &&
+          !g.city?.toLowerCase().includes(q) &&
+          !g.address?.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+
+    // Status filter
+    if (messageFilter === 'not_sent' && g.send_status) return false;
+    if (messageFilter === 'sent' && g.send_status !== 'sent') return false;
+    if (messageFilter === 'failed' && g.send_status !== 'failed') return false;
+
+    return true;
+  });
+
+  const handleMessageSelectAll = () => {
+    // Select all not sent groups
+    setMessageSelectedGroups(
+      filteredMessageGroups.filter(g => !g.send_status || g.send_status === 'failed').map(g => g.id)
+    );
+  };
+
+  const handleMessageSelectNone = () => {
+    setMessageSelectedGroups([]);
+  };
+
   return (
     <div className="dashboard">
       <header className="header">
@@ -380,8 +593,8 @@ function Dashboard({ onLogout }: DashboardProps) {
         <button className={`nav-tab ${activeTab === 'groups' ? 'active' : ''}`} onClick={() => { setActiveTab('groups'); loadGroups(); }}>
           Группы
         </button>
-        <button className={`nav-tab ${activeTab === 'send' ? 'active' : ''}`} onClick={() => { setActiveTab('send'); loadGroups('joined'); }}>
-          Рассылка
+        <button className={`nav-tab ${activeTab === 'messages' ? 'active' : ''}`} onClick={() => { setActiveTab('messages'); loadMessages(); }}>
+          Сообщения
         </button>
         <button className={`nav-tab ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
           История
@@ -688,92 +901,209 @@ function Dashboard({ onLogout }: DashboardProps) {
           </>
         )}
 
-        {/* Send Tab */}
-        {activeTab === 'send' && (
-          <div className="card send-form">
-            <h2>Новая рассылка</h2>
-
-            <div className="form-group">
-              <label>Аккаунт отправителя</label>
-              <select value={selectedAccount} onChange={(e) => setSelectedAccount(e.target.value)} style={{ width: '100%', padding: '10px', fontSize: '14px' }}>
-                <option value="">-- Выберите аккаунт --</option>
-                {accounts.filter(a => a.is_authorized).map((acc) => (
-                  <option key={acc.id} value={acc.phone}>{acc.first_name} ({acc.phone})</option>
-                ))}
-              </select>
+        {/* Messages Tab */}
+        {activeTab === 'messages' && (
+          <>
+            {/* Create Message */}
+            <div className="card">
+              <h2>Создать сообщение</h2>
+              <div className="form-group">
+                <label>Название (для себя)</label>
+                <input
+                  type="text"
+                  value={newMessageName}
+                  onChange={(e) => setNewMessageName(e.target.value)}
+                  placeholder="Например: Акция февраль"
+                />
+              </div>
+              <div className="form-group">
+                <label>Текст сообщения</label>
+                <textarea
+                  value={newMessageCaption}
+                  onChange={(e) => setNewMessageCaption(e.target.value)}
+                  placeholder="Текст подписи к фото"
+                />
+              </div>
+              <div className="form-group">
+                <label>Фото</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setNewMessagePhoto(e.target.files?.[0] || null)}
+                />
+              </div>
+              <button
+                className="btn btn-success"
+                onClick={handleCreateMessage}
+                disabled={createMessageLoading || !newMessagePhoto}
+              >
+                {createMessageLoading ? 'Создание...' : 'Создать сообщение'}
+              </button>
             </div>
 
-            <div className="form-group">
-              <label>Группы для рассылки</label>
-              <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', alignItems: 'center' }}>
-                <input type="text" placeholder="Поиск..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ flex: 1 }} />
-                <button className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={handleSelectAll}>Выбрать все</button>
-                <button className="btn btn-secondary" style={{ padding: '8px 12px' }} onClick={handleSelectNone}>Снять все</button>
-              </div>
-              <div className="checkbox-group">
-                {filteredGroups.filter(g => g.status === 'joined').map((group) => (
-                  <div key={group.id} className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      id={`group-${group.id}`}
-                      checked={selectedGroups.includes(group.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedGroups([...selectedGroups, group.id]);
-                        } else {
-                          setSelectedGroups(selectedGroups.filter(id => id !== group.id));
-                        }
+            {/* Messages List */}
+            <div className="card">
+              <h2>Мои сообщения</h2>
+              {messages.length === 0 ? (
+                <p style={{ color: '#666' }}>Нет созданных сообщений</p>
+              ) : (
+                <div className="groups-list">
+                  {messages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`group-item ${selectedMessage?.id === msg.id ? 'selected' : ''}`}
+                      style={{
+                        cursor: 'pointer',
+                        background: selectedMessage?.id === msg.id ? '#e3f2fd' : undefined
                       }}
-                    />
-                    <label htmlFor={`group-${group.id}`}>
-                      {group.title || group.address || group.link}
-                      {group.city && <span style={{ color: '#888', fontSize: '12px' }}> ({group.city})</span>}
-                    </label>
+                      onClick={() => handleSelectMessage(msg)}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div className="title">{msg.name}</div>
+                        <div className="id">
+                          {msg.caption ? msg.caption.substring(0, 50) + '...' : 'Без текста'}
+                          {' | '}
+                          Отправлено: {msg.stats.sent}/{msg.stats.total || 'нет'}
+                          {msg.stats.failed > 0 && <span style={{ color: '#dc3545' }}> | Ошибок: {msg.stats.failed}</span>}
+                        </div>
+                      </div>
+                      <button
+                        className="btn btn-secondary"
+                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                        onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg.id); }}
+                      >
+                        Удалить
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Selected Message - Send to Groups */}
+            {selectedMessage && (
+              <div className="card">
+                <h2>Отправка: {selectedMessage.name}</h2>
+
+                {/* Sending Status */}
+                {sendingStatus && (
+                  <div style={{ marginBottom: '15px', padding: '10px', background: '#f8f9fa', borderRadius: '8px' }}>
+                    <div style={{ display: 'flex', gap: '20px', marginBottom: '10px' }}>
+                      <span>Отправлено: <strong style={{ color: '#28a745' }}>{sendingStatus.stats.sent}</strong></span>
+                      <span>Ошибок: <strong style={{ color: '#dc3545' }}>{sendingStatus.stats.failed}</strong></span>
+                      <span>Ожидает: <strong style={{ color: '#ffc107' }}>{sendingStatus.stats.pending}</strong></span>
+                      {sendingStatus.is_sending && <span style={{ color: '#17a2b8' }}>Идёт отправка...</span>}
+                    </div>
                   </div>
-                ))}
-              </div>
-              <p style={{ marginTop: '10px', color: '#666' }}>Выбрано: {selectedGroups.length} групп</p>
-            </div>
-
-            <div className="form-group">
-              <label>Подпись к фото</label>
-              <textarea value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="Текст подписи (необязательно)" />
-            </div>
-
-            <div className="form-group">
-              <label>Фото</label>
-              <input type="file" accept="image/*" className="file-input" onChange={(e) => setPhotoFile(e.target.files?.[0] || null)} />
-            </div>
-
-            <div className="form-group">
-              <label>Задержка между отправками (секунд)</label>
-              <select value={delaySeconds} onChange={(e) => setDelaySeconds(Number(e.target.value))} style={{ width: '100%', padding: '10px', fontSize: '14px' }}>
-                <option value={0}>Без задержки</option>
-                <option value={3}>3 секунды</option>
-                <option value={5}>5 секунд</option>
-                <option value={10}>10 секунд</option>
-                <option value={15}>15 секунд</option>
-                <option value={30}>30 секунд</option>
-              </select>
-            </div>
-
-            <button className="btn btn-success" onClick={handleSendPost} disabled={sendLoading || !selectedAccount || selectedGroups.length === 0 || !photoFile}>
-              {sendLoading ? 'Отправка...' : `Отправить в ${selectedGroups.length} групп`}
-            </button>
-
-            {sendResult && (
-              <div className={`user-info mt-20 ${sendResult.status === 'error' ? '' : ''}`} style={sendResult.status === 'error' ? { background: '#f8d7da' } : {}}>
-                {sendResult.status === 'completed' ? (
-                  <>
-                    <p><strong>Рассылка завершена!</strong></p>
-                    <p>Успешно: {sendResult.success_count} | Ошибок: {sendResult.fail_count}</p>
-                  </>
-                ) : (
-                  <p style={{ color: '#dc3545' }}>Ошибка: {sendResult.message}</p>
                 )}
+
+                {/* Filters */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    placeholder="Поиск..."
+                    value={messageSearchQuery}
+                    onChange={(e) => setMessageSearchQuery(e.target.value)}
+                    style={{ flex: 1, minWidth: '200px' }}
+                  />
+                  <button className={`nav-tab ${messageFilter === 'all' ? 'active' : ''}`} onClick={() => setMessageFilter('all')}>
+                    Все
+                  </button>
+                  <button className={`nav-tab ${messageFilter === 'not_sent' ? 'active' : ''}`} onClick={() => setMessageFilter('not_sent')}>
+                    Не отправлено
+                  </button>
+                  <button className={`nav-tab ${messageFilter === 'sent' ? 'active' : ''}`} onClick={() => setMessageFilter('sent')}>
+                    Отправлено
+                  </button>
+                  <button className={`nav-tab ${messageFilter === 'failed' ? 'active' : ''}`} onClick={() => setMessageFilter('failed')}>
+                    Ошибки
+                  </button>
+                </div>
+
+                {/* Select buttons */}
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                  <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={handleMessageSelectAll}>
+                    Выбрать неотправленные
+                  </button>
+                  <button className="btn btn-secondary" style={{ padding: '6px 12px' }} onClick={handleMessageSelectNone}>
+                    Снять все
+                  </button>
+                  <span style={{ marginLeft: 'auto', color: '#666' }}>Выбрано: {messageSelectedGroups.length}</span>
+                </div>
+
+                {/* Groups List */}
+                <div style={{ maxHeight: '400px', overflowY: 'auto', border: '1px solid #ddd', borderRadius: '8px' }}>
+                  <table className="table" style={{ marginBottom: 0 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ width: '30px' }}></th>
+                        <th>Группа</th>
+                        <th style={{ width: '100px' }}>Статус</th>
+                        <th style={{ width: '120px' }}>Ссылки</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredMessageGroups.map((g) => (
+                        <tr key={g.id} style={{ background: g.send_status === 'sent' ? '#d4edda' : g.send_status === 'failed' ? '#f8d7da' : undefined }}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={messageSelectedGroups.includes(g.id)}
+                              disabled={g.send_status === 'sent'}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setMessageSelectedGroups([...messageSelectedGroups, g.id]);
+                                } else {
+                                  setMessageSelectedGroups(messageSelectedGroups.filter(id => id !== g.id));
+                                }
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <div>{g.title}</div>
+                            <div style={{ fontSize: '12px', color: '#666' }}>
+                              {g.city && `${g.city} | `}{g.address}
+                            </div>
+                          </td>
+                          <td>
+                            {g.send_status === 'sent' && <span style={{ color: '#28a745' }}>Отправлено</span>}
+                            {g.send_status === 'failed' && <span style={{ color: '#dc3545' }} title={g.error || ''}>Ошибка</span>}
+                            {g.send_status === 'sending' && <span style={{ color: '#17a2b8' }}>Отправка...</span>}
+                            {!g.send_status && <span style={{ color: '#666' }}>—</span>}
+                          </td>
+                          <td>
+                            <a href={g.link} target="_blank" rel="noopener noreferrer" style={{ marginRight: '8px' }}>Группа</a>
+                            {g.message_link && <a href={g.message_link} target="_blank" rel="noopener noreferrer">Пост</a>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Delay and Send button */}
+                <div style={{ marginTop: '15px', display: 'flex', gap: '15px', alignItems: 'center' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    Задержка:
+                    <select value={delaySeconds} onChange={(e) => setDelaySeconds(Number(e.target.value))} style={{ padding: '6px' }}>
+                      <option value={0}>Без задержки</option>
+                      <option value={3}>3 сек</option>
+                      <option value={5}>5 сек</option>
+                      <option value={10}>10 сек</option>
+                      <option value={30}>30 сек</option>
+                    </select>
+                  </label>
+                  <button
+                    className="btn btn-success"
+                    onClick={handleSendMessage}
+                    disabled={messageSendLoading || messageSelectedGroups.length === 0}
+                  >
+                    {messageSendLoading ? 'Отправка...' : `Отправить в ${messageSelectedGroups.length} групп`}
+                  </button>
+                </div>
               </div>
             )}
-          </div>
+          </>
         )}
 
         {/* History Tab */}

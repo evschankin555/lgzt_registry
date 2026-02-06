@@ -76,7 +76,7 @@ class Post(Base):
 
 
 class PostResult(Base):
-    """Результат отправки в конкретную группу"""
+    """Результат отправки в конкретную группу (legacy)"""
     __tablename__ = "post_results"
 
     id = Column(Integer, primary_key=True)
@@ -92,3 +92,51 @@ class PostResult(Base):
 
     post = relationship("Post", back_populates="results")
     group = relationship("Group", back_populates="post_results")
+
+
+class Message(Base):
+    """Подготовленное сообщение для рассылки"""
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=True)  # Название для удобства
+    caption = Column(Text, nullable=True)  # Текст сообщения
+    photo_path = Column(String(255), nullable=True)  # Путь к фото
+    status = Column(String(20), default="draft")  # draft, ready, sending, completed
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Связь с результатами отправки
+    sends = relationship("MessageSend", back_populates="message", cascade="all, delete-orphan")
+
+    @property
+    def sent_count(self):
+        """Количество успешных отправок"""
+        return sum(1 for s in self.sends if s.status == "sent")
+
+    @property
+    def total_groups(self):
+        """Общее количество групп для отправки"""
+        return len(self.sends)
+
+
+class MessageSend(Base):
+    """Отправка сообщения в конкретную группу"""
+    __tablename__ = "message_sends"
+
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
+
+    status = Column(String(20), default="pending")  # pending, sending, sent, failed
+    error_message = Column(Text, nullable=True)
+
+    # Результат отправки
+    telegram_message_id = Column(Integer, nullable=True)  # ID сообщения в TG
+    message_link = Column(String(255), nullable=True)  # Ссылка на пост
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)
+
+    message = relationship("Message", back_populates="sends")
+    group = relationship("Group")
