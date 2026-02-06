@@ -969,10 +969,10 @@ function Dashboard({ onLogout }: DashboardProps) {
                       </div>
                       <button
                         className="btn btn-secondary"
-                        style={{ padding: '4px 8px', fontSize: '12px' }}
+                        style={{ padding: '4px 8px', fontSize: '12px', flexShrink: 0, alignSelf: 'center' }}
                         onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg.id); }}
                       >
-                        Удалить
+                        X
                       </button>
                     </div>
                   ))}
