@@ -1326,6 +1326,31 @@ async def get_message_targets_stats(
     }
 
 
+# ========== Channel Export Endpoints ==========
+
+@app.get("/api/channels/{username}/messages")
+async def get_channel_messages(
+    username: str,
+    phone: str = Query(...),
+    limit: int = Query(200),
+    user=Depends(get_current_user)
+):
+    """Считать сообщения из канала"""
+    return await tg.get_channel_messages(phone, username, limit)
+
+
+@app.get("/api/channels/{username}/export")
+async def export_channel_media(
+    username: str,
+    phone: str = Query(...),
+    limit: int = Query(200),
+    user=Depends(get_current_user)
+):
+    """Скачать медиа из канала"""
+    output_dir = os.path.join("data", "exports", username, "photos")
+    return await tg.download_channel_media(phone, username, output_dir, limit)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)

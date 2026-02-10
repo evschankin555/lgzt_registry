@@ -247,6 +247,69 @@ async def leave_group(phone: str, group_id: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
+async def get_channel_messages(phone: str, channel_username: str, limit: int = 200) -> list:
+    """Считать сообщения из канала/группы"""
+    client = await get_client(phone)
+
+    if not client.is_connected():
+        await client.connect()
+
+    if not await client.is_user_authorized():
+        return {"status": "error", "message": "Not authorized"}
+
+    try:
+        entity = await client.get_entity(channel_username)
+        messages = []
+        async for message in client.iter_messages(entity, limit=limit):
+            msg_data = {
+                "id": message.id,
+                "date": message.date.isoformat() if message.date else None,
+                "text": message.text or "",
+                "grouped_id": str(message.grouped_id) if message.grouped_id else None,
+                "has_media": message.media is not None,
+                "media_type": None,
+                "views": message.views,
+            }
+            if message.photo:
+                msg_data["media_type"] = "photo"
+            elif message.document:
+                msg_data["media_type"] = "document"
+            elif message.video:
+                msg_data["media_type"] = "video"
+            messages.append(msg_data)
+
+        return {"status": "success", "messages": messages, "count": len(messages)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def download_channel_media(phone: str, channel_username: str, output_dir: str, limit: int = 200) -> dict:
+    """Скачать медиа из канала"""
+    client = await get_client(phone)
+
+    if not client.is_connected():
+        await client.connect()
+
+    if not await client.is_user_authorized():
+        return {"status": "error", "message": "Not authorized"}
+
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        entity = await client.get_entity(channel_username)
+        downloaded = []
+        async for message in client.iter_messages(entity, limit=limit):
+            if message.photo:
+                filename = f"{message.id}_0.jpg"
+                filepath = os.path.join(output_dir, filename)
+                await client.download_media(message, file=filepath)
+                downloaded.append(filename)
+                await asyncio.sleep(0.5)
+
+        return {"status": "success", "downloaded": downloaded, "count": len(downloaded)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 async def disconnect_all():
     """Отключить все клиенты"""
     for client in clients.values():
