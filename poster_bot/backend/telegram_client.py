@@ -206,7 +206,7 @@ async def send_photo_to_group(phone: str, group_id: str, photo_path: str, captio
 
 
 async def check_already_posted(phone: str, group_id: str, hours: int = 24) -> dict:
-    """Проверить, публиковали ли мы уже сообщение в этот чат за последние N часов"""
+    """Проверить, публиковали ли мы уже фото-пост в этот чат за последние N часов"""
     client = await get_client(phone)
 
     if not client.is_connected():
@@ -226,13 +226,13 @@ async def check_already_posted(phone: str, group_id: str, hours: int = 24) -> di
         )
 
         for msg in messages:
-            if msg.date and msg.date > cutoff:
+            if msg.date and msg.date > cutoff and msg.media is not None:
                 return {
                     "posted": True,
                     "message_id": msg.id,
                     "date": msg.date.isoformat(),
                     "text": (msg.text or "")[:100],
-                    "has_media": msg.media is not None
+                    "has_media": True
                 }
 
         return {"posted": False}
