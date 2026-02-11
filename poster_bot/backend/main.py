@@ -934,9 +934,21 @@ async def send_message_to_groups(
 
             success_count += 1
         else:
-            send.send_status = "failed"
-            send.send_error = send_result.get("message", "Unknown error")
-            fail_count += 1
+            # Ошибка - проверяем, может сообщение всё-таки доставилось
+            verify = await tg.check_already_posted(phone, group.telegram_id, hours=1)
+            if verify.get("posted"):
+                send.send_status = "sent"
+                send.sent_at = datetime.utcnow()
+                send.send_error = None
+                if verify.get("message_id"):
+                    send.telegram_message_id = verify["message_id"]
+                    chat_id = str(group.telegram_id).replace("-100", "")
+                    send.message_link = f"https://t.me/c/{chat_id}/{verify['message_id']}"
+                success_count += 1
+            else:
+                send.send_status = "failed"
+                send.send_error = send_result.get("message", "Unknown error")
+                fail_count += 1
 
         await db.commit()
 
@@ -1349,6 +1361,18 @@ async def export_channel_media(
     """Скачать медиа из канала"""
     output_dir = os.path.join("data", "exports", username, "photos")
     return await tg.download_channel_media(phone, username, output_dir, limit)
+
+
+@app.get("/api/check-post/{group_telegram_id}")
+async def check_post_in_group(
+    group_telegram_id: str,
+    phone: str = Query(...),
+    hours: int = Query(48),
+    user=Depends(get_current_user)
+):
+    """Проверить, есть ли наш пост в чате за последние N часов"""
+    result = await tg.check_already_posted(phone, group_telegram_id, hours=hours)
+    return result
 
 
 if __name__ == "__main__":

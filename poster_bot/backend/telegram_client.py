@@ -1,5 +1,6 @@
 import os
 import asyncio
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from telethon import TelegramClient
 from telethon.tl.functions.messages import ImportChatInviteRequest
@@ -202,6 +203,41 @@ async def send_photo_to_group(phone: str, group_id: str, photo_path: str, captio
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+async def check_already_posted(phone: str, group_id: str, hours: int = 24) -> dict:
+    """Проверить, публиковали ли мы уже сообщение в этот чат за последние N часов"""
+    client = await get_client(phone)
+
+    if not client.is_connected():
+        await client.connect()
+
+    if not await client.is_user_authorized():
+        return {"posted": False, "error": "Not authorized"}
+
+    try:
+        me = await client.get_me()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        messages = await client.get_messages(
+            int(group_id),
+            from_user=me,
+            limit=10
+        )
+
+        for msg in messages:
+            if msg.date and msg.date > cutoff:
+                return {
+                    "posted": True,
+                    "message_id": msg.id,
+                    "date": msg.date.isoformat(),
+                    "text": (msg.text or "")[:100],
+                    "has_media": msg.media is not None
+                }
+
+        return {"posted": False}
+    except Exception as e:
+        return {"posted": False, "error": str(e)}
 
 
 async def get_dialogs(phone: str) -> dict:

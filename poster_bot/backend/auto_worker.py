@@ -350,12 +350,21 @@ class AutoWorker:
                 await db.commit()
                 return
 
-            # ЗАЩИТА ОТ ДУБЛИКАТОВ: проверяем не отправляли ли уже в эту группу
-            if group.last_message_sent_id:
-                target.send_status = "skipped"
-                target.send_error = f"Already sent message #{group.last_message_sent_id} at {group.last_sent_at}"
+            # ЗАЩИТА ОТ ДУБЛИКАТОВ: проверяем через Telegram API, есть ли наш пост в чате
+            check = await tg.check_already_posted(self.phone, group.telegram_id, hours=48)
+            if check.get("posted"):
+                target.send_status = "sent"
+                target.send_error = None
+                target.sent_at = datetime.utcnow()
+                if check.get("message_id"):
+                    target.telegram_message_id = check["message_id"]
+                    chat_id = str(group.telegram_id).replace("-100", "")
+                    target.message_link = f"https://t.me/c/{chat_id}/{check['message_id']}"
+                group.can_leave = True
+                group.last_message_sent_id = message.id
+                group.last_sent_at = datetime.utcnow()
                 await db.commit()
-                print(f"AutoWorker: пропускаем {group.title} - уже отправляли сообщение #{group.last_message_sent_id}")
+                print(f"AutoWorker: пропускаем {group.title} - пост уже есть в чате (msg #{check.get('message_id')})")
                 return
 
             target.send_status = "sending"
@@ -389,9 +398,26 @@ class AutoWorker:
                 await self._increment_stat("send")
                 print(f"AutoWorker: отправлено в {group.title}")
             else:
-                target.send_status = "failed"
-                target.send_error = result.get("message", "Unknown error")
-                print(f"AutoWorker: ошибка отправки в {group.title}: {target.send_error}")
+                # Ошибка - но проверяем, может сообщение всё-таки доставилось
+                verify = await tg.check_already_posted(self.phone, group.telegram_id, hours=1)
+                if verify.get("posted"):
+                    # Сообщение доставилось несмотря на ошибку!
+                    target.send_status = "sent"
+                    target.sent_at = datetime.utcnow()
+                    target.send_error = None
+                    if verify.get("message_id"):
+                        target.telegram_message_id = verify["message_id"]
+                        chat_id = str(group.telegram_id).replace("-100", "")
+                        target.message_link = f"https://t.me/c/{chat_id}/{verify['message_id']}"
+                    group.can_leave = True
+                    group.last_message_sent_id = message.id
+                    group.last_sent_at = datetime.utcnow()
+                    await self._increment_stat("send")
+                    print(f"AutoWorker: {group.title} - ошибка '{result.get('message')}', но пост доставлен (msg #{verify.get('message_id')})")
+                else:
+                    target.send_status = "failed"
+                    target.send_error = result.get("message", "Unknown error")
+                    print(f"AutoWorker: ошибка отправки в {group.title}: {target.send_error}")
 
             await db.commit()
 
