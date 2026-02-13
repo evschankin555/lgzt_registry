@@ -1438,6 +1438,29 @@ async def mark_can_leave(
     return {"status": "success", "updated": updated}
 
 
+@app.post("/api/groups/reset-failed")
+async def reset_failed_groups(
+    error_contains: str = Form("wait of"),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Сбросить failed-группы (FloodWait) обратно в pending для повторной попытки"""
+    stmt = select(Group).where(Group.status == "failed")
+    failed_groups = (await db.execute(stmt)).scalars().all()
+
+    reset_count = 0
+    for group in failed_groups:
+        join_error = (group.join_error or "").lower()
+        if error_contains.lower() in join_error:
+            group.status = "pending"
+            group.join_error = None
+            group.join_attempts = 0
+            reset_count += 1
+
+    await db.commit()
+    return {"status": "success", "reset_count": reset_count, "total_failed": len(failed_groups)}
+
+
 @app.post("/api/groups/leave-batch")
 async def leave_groups_batch(
     phone: str = Form(...),
