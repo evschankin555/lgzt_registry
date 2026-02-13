@@ -1375,6 +1375,99 @@ async def check_post_in_group(
     return result
 
 
+@app.post("/api/groups/{group_id}/leave")
+async def leave_group_endpoint(
+    group_id: int,
+    phone: str = Form(...),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Выйти из группы"""
+    # Получаем группу
+    stmt = select(Group).where(Group.id == group_id)
+    group = (await db.execute(stmt)).scalar_one_or_none()
+
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    if not group.telegram_id:
+        raise HTTPException(status_code=400, detail="Group has no telegram_id")
+
+    # Выходим через telegram_client
+    result = await tg.leave_group(phone, group.telegram_id)
+
+    if result.get("status") == "success":
+        group.status = "left"
+        group.left_at = datetime.utcnow()
+        await db.commit()
+        return {"status": "success", "message": f"Left group {group.title}"}
+    else:
+        return {"status": "error", "message": result.get("message", "Unknown error")}
+
+
+@app.post("/api/groups/leave-batch")
+async def leave_groups_batch(
+    phone: str = Form(...),
+    group_ids: str = Form(...),  # comma-separated IDs
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Выйти из нескольких групп"""
+    import asyncio
+
+    group_id_list = [int(x.strip()) for x in group_ids.split(",") if x.strip()]
+
+    results = []
+    success_count = 0
+    fail_count = 0
+
+    for group_id in group_id_list:
+        # Получаем группу
+        stmt = select(Group).where(Group.id == group_id)
+        group = (await db.execute(stmt)).scalar_one_or_none()
+
+        if not group or not group.telegram_id:
+            results.append({
+                "group_id": group_id,
+                "status": "error",
+                "message": "Group not found or no telegram_id"
+            })
+            fail_count += 1
+            continue
+
+        # Выходим
+        result = await tg.leave_group(phone, group.telegram_id)
+
+        if result.get("status") == "success":
+            group.status = "left"
+            group.left_at = datetime.utcnow()
+            await db.commit()
+            success_count += 1
+            results.append({
+                "group_id": group_id,
+                "group_title": group.title,
+                "status": "success"
+            })
+        else:
+            fail_count += 1
+            results.append({
+                "group_id": group_id,
+                "group_title": group.title,
+                "status": "error",
+                "message": result.get("message", "Unknown error")
+            })
+
+        # Небольшая задержка между выходами
+        await asyncio.sleep(2)
+
+    return {
+        "status": "completed",
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "results": results
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=True)
