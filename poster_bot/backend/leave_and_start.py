@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 
 API_BASE = "https://lgzt.developing-site.ru/api"
-PASSWORD = "admin2026$rassilka"
+PASSWORD = "admin2026" + chr(36) + "rassilka"
 
 
 class PosterBotController:

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import List, Dict
 
 API_BASE = "https://lgzt.developing-site.ru/api"
-PASSWORD = "admin2026$rassilka"
+PASSWORD = "admin2026" + chr(36) + "rassilka"
 
 
 class PosterBotManager:

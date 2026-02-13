@@ -932,6 +932,11 @@ async def send_message_to_groups(
                 chat_id = str(group.telegram_id).replace("-100", "")
                 send.message_link = f"https://t.me/c/{chat_id}/{send_result['message_id']}"
 
+            # Помечаем группу для выхода
+            group.can_leave = True
+            group.last_message_sent_id = message.id
+            group.last_sent_at = datetime.utcnow()
+
             success_count += 1
         else:
             # Ошибка - проверяем, может сообщение всё-таки доставилось
@@ -944,6 +949,9 @@ async def send_message_to_groups(
                     send.telegram_message_id = verify["message_id"]
                     chat_id = str(group.telegram_id).replace("-100", "")
                     send.message_link = f"https://t.me/c/{chat_id}/{verify['message_id']}"
+                group.can_leave = True
+                group.last_message_sent_id = message.id
+                group.last_sent_at = datetime.utcnow()
                 success_count += 1
             else:
                 send.send_status = "failed"
@@ -1403,6 +1411,31 @@ async def leave_group_endpoint(
         return {"status": "success", "message": f"Left group {group.title}"}
     else:
         return {"status": "error", "message": result.get("message", "Unknown error")}
+
+
+@app.post("/api/groups/mark-can-leave")
+async def mark_can_leave(
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Пометить все группы с успешной отправкой как can_leave=True"""
+    # Находим все группы где есть успешная отправка (sent) в MessageTarget
+    stmt = select(MessageTarget).where(MessageTarget.send_status == "sent")
+    sent_targets = (await db.execute(stmt)).scalars().all()
+
+    updated = 0
+    for target in sent_targets:
+        stmt = select(Group).where(Group.id == target.group_id)
+        group = (await db.execute(stmt)).scalar_one_or_none()
+
+        if group and group.status == "joined" and not group.can_leave:
+            group.can_leave = True
+            group.last_message_sent_id = target.message_id
+            group.last_sent_at = target.sent_at or datetime.utcnow()
+            updated += 1
+
+    await db.commit()
+    return {"status": "success", "updated": updated}
 
 
 @app.post("/api/groups/leave-batch")
