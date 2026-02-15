@@ -85,6 +85,7 @@ class JoinWorker:
     async def _run(self, phone: str):
         """Основной цикл воркера"""
         import random
+        import re
 
         while self.is_running:
             # Проверяем лимит
@@ -135,13 +136,36 @@ class JoinWorker:
                         self.joined_this_session += 1
                         self.stats["joined_this_session"] = self.joined_this_session
                     else:
-                        group.status = "failed"
-                        group.join_error = result.get("error", "Unknown error")
+                        error_msg = result.get("error", "Unknown error")
+
+                        # Проверяем FloodWait
+                        flood_match = re.search(r'wait of (\d+) second', error_msg.lower())
+                        if flood_match:
+                            wait_seconds = int(flood_match.group(1))
+                            # Возвращаем в pending, не помечаем как failed
+                            group.status = "pending"
+                            group.join_error = error_msg
+                            print(f"FloodWait: ждём {wait_seconds}с для {group.link}")
+                            await db.commit()
+
+                            # Ждём N + 10 секунд
+                            total_wait = wait_seconds + 10
+                            self.stats["next_attempt_in"] = total_wait
+                            for i in range(total_wait):
+                                if not self.is_running:
+                                    break
+                                self.stats["next_attempt_in"] = total_wait - i
+                                await asyncio.sleep(1)
+                            continue
+                        else:
+                            # Другие ошибки — помечаем как failed
+                            group.status = "failed"
+                            group.join_error = error_msg
 
                     await db.commit()
 
-                # Случайная задержка
-                delay = random.randint(self.delay_min, self.delay_max)
+                # Случайная задержка (минимум 30 сек)
+                delay = random.randint(max(30, self.delay_min), max(30, self.delay_max))
                 self.stats["next_attempt_in"] = delay
 
                 for i in range(delay):
