@@ -126,6 +126,7 @@ class JoinWorker:
                     # Пробуем вступить
                     result = await self._join_group(phone, group.link)
 
+                    join_success = False
                     if result["status"] == "success":
                         group.status = "joined"
                         group.is_joined = True
@@ -135,6 +136,7 @@ class JoinWorker:
                         group.join_error = None
                         self.joined_this_session += 1
                         self.stats["joined_this_session"] = self.joined_this_session
+                        join_success = True
                     else:
                         error_msg = result.get("error", "Unknown error")
 
@@ -164,8 +166,12 @@ class JoinWorker:
 
                     await db.commit()
 
-                # Случайная задержка (минимум 30 сек)
-                delay = random.randint(max(30, self.delay_min), max(30, self.delay_max))
+                # После успеха — полная задержка 30-60 сек, после ошибки — 5 сек
+                if join_success:
+                    delay = random.randint(max(30, self.delay_min), max(30, self.delay_max))
+                else:
+                    delay = 5
+
                 self.stats["next_attempt_in"] = delay
 
                 for i in range(delay):
