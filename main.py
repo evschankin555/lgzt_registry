@@ -1,6 +1,7 @@
 import os
 import asyncio
 from vars import *
+from vars import PRODUCTION_MODE
 from functions import *
 from modules.auth import (
     is_developer, get_developer_role, set_developer_role, should_show_as_admin
@@ -41,8 +42,8 @@ async def start(msg):
 
     else:
         # Обычный пользователь
-        # Если это developer в режиме user, показываем кнопку переключения
-        if is_developer(user_id):
+        # Если это developer в режиме user, показываем кнопку переключения (только в dev режиме)
+        if is_developer(user_id) and not PRODUCTION_MODE:
             await bot.send_message(chat_id=msg.chat.id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
             await bot.send_message(
                 chat_id=msg.chat.id,
@@ -686,8 +687,9 @@ async def callback(call):
 
 
     # Обработка переключения режимов для developer (в состоянии admin_menu)
+    # Скрыто в продакшн режиме
     elif call.data == 'switch_to_user':
-        if is_developer(user_id):
+        if is_developer(user_id) and not PRODUCTION_MODE:
             set_developer_role(user_id, 'user')
             log_role_switch(user_id, 'user')
             await bot.answer_callback_query(call.id, "Переключено в режим пользователя")
@@ -706,7 +708,7 @@ async def callback(call):
             await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
 
     elif call.data == 'switch_to_admin':
-        if is_developer(user_id):
+        if is_developer(user_id) and not PRODUCTION_MODE:
             set_developer_role(user_id, 'admin')
             log_role_switch(user_id, 'admin')
             await bot.answer_callback_query(call.id, "Переключено в режим админа")
@@ -835,8 +837,9 @@ async def callback(call):
         await bot.delete_state(user_id=call.from_user.id, chat_id=call.message.chat.id)
 
     # Обработка переключения режимов для developer
+    # Скрыто в продакшн режиме
     elif call.data == 'switch_to_user':
-        if is_developer(user_id):
+        if is_developer(user_id) and not PRODUCTION_MODE:
             set_developer_role(user_id, 'user')
             log_role_switch(user_id, 'user')
             await bot.answer_callback_query(call.id, "Переключено в режим пользователя")
@@ -857,7 +860,7 @@ async def callback(call):
             await bot.answer_callback_query(call.id, "Только для разработчиков", show_alert=True)
 
     elif call.data == 'switch_to_admin':
-        if is_developer(user_id):
+        if is_developer(user_id) and not PRODUCTION_MODE:
             set_developer_role(user_id, 'admin')
             log_role_switch(user_id, 'admin')
             await bot.answer_callback_query(call.id, "Переключено в режим админа")

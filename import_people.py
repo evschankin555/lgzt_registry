@@ -1,71 +1,74 @@
 # import_users.py
 import pathlib
 from datetime import datetime
+import asyncio
 
 import pandas as pd
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy import select
 
-from models import Base, User  # reuse the models defined earlier
+from models import Base, User
+from db import SessionLocal, engine
 
-def load_users_from_excel(excel_path, sqlite_url: str = "sqlite:///app.db"):
+async def load_users_from_excel(excel_path):
 
     """
     Read users from an Excel file and insert/update them in the SQLite database.
     """
 
-
-    engine = create_engine(sqlite_url, echo=False, future=True)
-
-    # Ensure tables exist
-    Base.metadata.create_all(engine)
-
-    # Read Excel file - headers are in row 1 (index 1), skip row 0
-    df = pd.read_excel(excel_path, usecols=[0,1,2,3,4,5], header=1)
+    # Читаем Excel файл с нормальными заголовками
+    df = pd.read_excel(excel_path)
 
     print(f"Columns: {df.columns.tolist()}")
     print(f"Total rows: {len(df)}")
 
-    # Clean and convert the date column
+    # Очищаем и конвертируем дату рождения
     df["Дата рождения"] = pd.to_datetime(df["Дата рождения"], errors="coerce").dt.date
 
-    with Session(engine, future=True) as session:
+    async with SessionLocal() as session:
+        imported = 0
+        updated = 0
 
-        for row in df.to_dict(orient="records"):
+        for idx, row in enumerate(df.to_dict(orient="records"), 1):
 
-            # Drop NaN values so SQLAlchemy receives None
+            # Убираем NaN значения
             cleaned = {k: (None if pd.isna(v) else v) for k, v in row.items()}
 
-            # Check if the user already exists using passport + country as the unique key
-            existing = (
-                session.query(User)
-                .filter(
-                    User.passport_number == cleaned["СЕРИЯ номер паспорта"],
-                )
-                .one_or_none()
+            # Проверяем существование пользователя по фамилии + дате рождения
+            stmt = select(User).where(
+                User.last_name == cleaned["Фамилия"],
+                User.date_of_birth == cleaned["Дата рождения"]
             )
+            result = await session.execute(stmt)
+            existing = result.scalars().one_or_none()
 
             if existing:
-                # Update base fields; skip address/phone since users supply them later
+                # Обновляем базовые поля
                 existing.first_name = cleaned["Имя"]
                 existing.last_name = cleaned["Фамилия"]
                 existing.father_name = cleaned.get("Отчество")
                 existing.date_of_birth = cleaned["Дата рождения"]
                 existing.counter = cleaned["№ п/п"]
+                updated += 1
             else:
                 user = User(
                     first_name=cleaned["Имя"],
                     last_name=cleaned["Фамилия"],
                     father_name=cleaned.get("Отчество"),
-                    passport_number=cleaned["СЕРИЯ номер паспорта"],
+                    passport_number=None,  # Паспорта нет в новой базе
                     date_of_birth=cleaned["Дата рождения"],
                     counter=cleaned["№ п/п"]
                 )
                 session.add(user)
+                imported += 1
 
-        session.commit()
-    print(f"Imported {len(df)} users into {sqlite_url}")
+            # Коммитим батчами по 1000 записей
+            if idx % 1000 == 0:
+                await session.commit()
+                print(f"  Обработано: {idx}/{len(df)} записей...")
+
+        await session.commit()
+    print(f"\nOK: Import zavershen - dobavleno {imported}, obnovleno {updated} polzovateley")
 
 
 if __name__ == "__main__":
-    load_users_from_excel("data/База.xlsx")
+    asyncio.run(load_users_from_excel("data/База.xlsx"))

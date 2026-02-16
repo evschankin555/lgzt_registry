@@ -85,10 +85,14 @@ markup_default.add(types.KeyboardButton("Регистрация"),types.Keyboard
 
 bot.add_custom_filter(asyncio_filters.StateFilter(bot))
 
+# Режим продакшн - скрывает кнопки переключения режимов для разработчика
+PRODUCTION_MODE = True
+
 admin_ids = [9958633101, 2693757140, 1632759029]
 superadmin_ids = [995863310, 2693757140, 1632759029]
 
 # ID разработчика - может переключать режимы admin/user для тестирования
+# В продакшн режиме кнопки переключения скрыты
 developer_ids = [1632759029]
 
 def is_developer(user_id: int) -> bool:

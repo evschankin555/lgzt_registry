@@ -25,7 +25,7 @@ class User(Base):
     last_name = Column(String(100), nullable=False)
     first_name = Column(String(100), nullable=False)
     father_name = Column(String(100), nullable=True)
-    passport_number = Column(String(100), nullable=False)
+    passport_number = Column(String(100), nullable=True)  # Сделано опциональным для новой БД
     date_of_birth = Column(Date, nullable=False)
     counter = Column(Integer, nullable=False)
     address = Column(String(255))
@@ -38,7 +38,7 @@ class User(Base):
     company = relationship("Company", back_populates="users")
 
     __table_args__ = (
-        UniqueConstraint("passport_number", name="uq_passport"),
+        UniqueConstraint("last_name", "date_of_birth", name="uq_user_identity"),
     )
 
 class User_who_blocked(Base):
