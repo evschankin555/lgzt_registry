@@ -14,7 +14,7 @@
 
 ```
 registry_dashboard/
-├── backend/              # FastAPI (порт 8002)
+├── backend/              # FastAPI (порт 8112)
 │   ├── main.py          # API эндпоинты
 │   ├── auth.py          # JWT авторизация
 │   ├── config.py        # Настройки
@@ -48,7 +48,7 @@ cp .env.example .env
 # Отредактировать .env
 
 python main.py
-# API доступен на http://localhost:8002
+# API доступен на http://localhost:8112
 ```
 
 ### Frontend
@@ -57,7 +57,7 @@ python main.py
 cd registry_dashboard/frontend
 npm install
 npm run dev
-# Dashboard на http://localhost:3001
+# Dashboard на http://localhost:3112
 ```
 
 ## 🌐 Деплой на сервер
@@ -199,7 +199,7 @@ journalctl -u registry-dashboard -n 50
 ls -la /var/www/lgzt_registry/app.db
 
 # Проверить порт
-netstat -tlnp | grep 8002
+netstat -tlnp | grep 8112
 ```
 
 ### Frontend не собирается
