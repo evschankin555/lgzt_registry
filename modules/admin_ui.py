@@ -16,6 +16,7 @@ from models import User, Company, User_volunteer
 from modules.auth import is_developer, get_developer_role
 from modules.error_handler import safe_edit_message, safe_send_message
 from modules.logger import log_company_change, log_user_delete
+from vars import PRODUCTION_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -225,8 +226,8 @@ def build_admin_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton("📥 Выгрузка Excel", callback_data="get_total_excel")
     )
 
-    # Кнопка переключения режима только для developer
-    if is_developer(user_id):
+    # Кнопка переключения режима только для developer в dev режиме
+    if is_developer(user_id) and not PRODUCTION_MODE:
         current_role = get_developer_role(user_id)
         if current_role == 'admin':
             keyboard.add(
