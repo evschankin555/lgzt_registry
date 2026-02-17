@@ -4,6 +4,7 @@ import { getStats } from '../api';
 import Users from './Users';
 import Volunteers from './Volunteers';
 import Companies from './Companies';
+import Admins from './Admins';
 
 interface DashboardProps {
   onLogout: () => void;
@@ -68,6 +69,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             >
               Компании
             </button>
+            <button
+              onClick={() => navigate('/admins')}
+              className={isActive('/admins') ? 'active' : ''}
+            >
+              Админы
+            </button>
           </nav>
           <button onClick={handleLogout} className="logout-btn">
             Выйти
@@ -81,6 +88,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           <Route path="/users" element={<Users />} />
           <Route path="/volunteers" element={<Volunteers />} />
           <Route path="/companies" element={<Companies />} />
+          <Route path="/admins" element={<Admins />} />
         </Routes>
       </div>
     </div>

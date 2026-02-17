@@ -337,6 +337,52 @@ async def delete_volunteer(volunteer_id: int, current_user: dict = Depends(get_c
         await session.commit()
         return {"success": True}
 
+# ===== АДМИНИСТРАТОРЫ =====
+
+@app.get(f"{API_PREFIX}/admins")
+async def get_admins(current_user: dict = Depends(get_current_user)):
+    """Получить список администраторов бота"""
+    from vars import admin_ids
+    from telebot import async_telebot
+    import os
+
+    # Получаем токен бота для API запросов
+    bot_token = os.environ.get('telegram_bot_api')
+    if not bot_token:
+        raise HTTPException(status_code=500, detail="Bot token not configured")
+
+    bot = async_telebot.AsyncTeleBot(bot_token)
+
+    admins_data = []
+    async with SessionLocal() as session:
+        for admin_id in admin_ids:
+            admin_info = {
+                "tg_id": admin_id,
+                "username": None,
+                "first_name": None,
+                "last_name": None,
+                "telegram_link": None
+            }
+
+            # Пытаемся получить информацию из Telegram API
+            try:
+                chat = await bot.get_chat(admin_id)
+                admin_info["username"] = chat.username
+                admin_info["first_name"] = chat.first_name
+                admin_info["last_name"] = chat.last_name
+
+                # Формируем ссылку на Telegram профиль
+                if chat.username:
+                    admin_info["telegram_link"] = f"https://t.me/{chat.username}"
+                else:
+                    admin_info["telegram_link"] = f"tg://user?id={admin_id}"
+            except Exception as e:
+                print(f"Error getting admin {admin_id} info: {e}")
+
+            admins_data.append(admin_info)
+
+    return {"admins": admins_data}
+
 # ===== ЭКСПОРТ =====
 
 @app.get(f"{API_PREFIX}/export/excel")

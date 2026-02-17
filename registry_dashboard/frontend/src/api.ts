@@ -76,4 +76,9 @@ export const exportExcel = async () => {
   link.remove();
 };
 
+export const getAdmins = async () => {
+  const response = await api.get('/admins');
+  return response.data;
+};
+
 export default api;
