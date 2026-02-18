@@ -27,6 +27,7 @@ text_admin_welcome = "Добро пожаловать в админ часть �
 
 class MyStates(StatesGroup):
 
+    handle_volunteer_id = State()
     handle_surname = State()
     handle_dob = State()
     handle_names = State()
@@ -75,6 +76,9 @@ markup_change_user_data.add(types.InlineKeyboardButton(text=f'Изменить {
 
 markup_add_volunteer = types.InlineKeyboardMarkup()
 markup_add_volunteer.add(types.InlineKeyboardButton(text=f'{emojize(":plus_sign:")}', callback_data='add_volunteer'))
+
+markup_skip_volunteer_id = types.InlineKeyboardMarkup()
+markup_skip_volunteer_id.add(types.InlineKeyboardButton(text='Пропустить', callback_data='skip_volunteer_id'))
 
 markup_default_volunteer = types.ReplyKeyboardMarkup(resize_keyboard=True)
 markup_default_volunteer.add(types.KeyboardButton("Регистрация"))

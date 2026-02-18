@@ -3,6 +3,7 @@ import asyncio
 from vars import *
 from vars import PRODUCTION_MODE
 from functions import *
+from functions import check_volunteer_exists
 from modules.auth import (
     is_developer, get_developer_role, set_developer_role, should_show_as_admin
 )
@@ -69,11 +70,9 @@ async def start_signup(msg):
         )
         await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
     else:
-        # Шаг 1: Фамилия
-        text = get_step_text(1)
-        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
-
-        await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.handle_surname)
+        text = "Введите номер волонтёра (если есть), или нажмите «Пропустить»."
+        await bot.send_message(chat_id=msg.chat.id, text=text, reply_markup=markup_skip_volunteer_id)
+        await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.handle_volunteer_id)
 
 @bot.message_handler(content_types='text', regexp='Мой профиль')
 async def show_profile(msg):
@@ -105,6 +104,27 @@ async def show_profile(msg):
         )
         await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML', reply_markup=markup_default)
 
+
+
+@bot.message_handler(content_types='text', state=[MyStates.handle_volunteer_id])
+async def handle_volunteer_id(msg):
+    text_input = msg.text.strip()
+    try:
+        vol_id = int(text_input)
+    except ValueError:
+        await bot.send_message(chat_id=msg.chat.id, text="Введите число — номер волонтёра, или нажмите «Пропустить».", reply_markup=markup_skip_volunteer_id)
+        return
+
+    if not await check_volunteer_exists(vol_id):
+        await bot.send_message(chat_id=msg.chat.id, text="Волонтёр с таким номером не найден. Попробуйте ещё раз или нажмите «Пропустить».", reply_markup=markup_skip_volunteer_id)
+        return
+
+    async with bot.retrieve_data(msg.from_user.id, msg.chat.id) as data:
+        data['volunteer_id'] = vol_id
+
+    text = get_step_text(1)
+    await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+    await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.handle_surname)
 
 
 @bot.message_handler(content_types='text', state=[MyStates.handle_surname])
@@ -795,6 +815,19 @@ async def callback(call):
             text = format_error_message("Ошибка", "Не удалось выбрать предприятие.")
             await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
 
+        await bot.answer_callback_query(call.id)
+        return
+
+    if call.data == 'skip_volunteer_id':
+        async with bot.retrieve_data(user_id=user_id, chat_id=call.message.chat.id) as data:
+            data['volunteer_id'] = None
+        try:
+            await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+        except:
+            pass
+        text = get_step_text(1)
+        await bot.send_message(chat_id=call.message.chat.id, text=text, parse_mode='HTML')
+        await bot.set_state(user_id=call.message.chat.id, chat_id=user_id, state=MyStates.handle_surname)
         await bot.answer_callback_query(call.id)
         return
 

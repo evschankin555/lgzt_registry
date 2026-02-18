@@ -172,6 +172,7 @@ async def register_user(user_botdata) -> True | False:
             user.address = home_address
             user.registered_at = registered_at
             user.tg_id = tg_id
+            user.volunteer_id = user_botdata.get('volunteer_id')
             await session.commit()
 
             await session.refresh(user)
@@ -526,7 +527,8 @@ async def add_volunteer(user_tg_id: int, added_by: int = None, name: str = None)
             volunteer.name = name
             session.add(volunteer)
             await session.commit()
-            return True
+            await session.refresh(volunteer)
+            return volunteer.id
         else:
             return False
 
@@ -544,4 +546,19 @@ async def is_volunteer(user_tg_id):
             return False
         else:
             return True
+
+
+async def check_volunteer_exists(volunteer_id: int) -> bool:
+    """
+    Проверить существует ли волонтёр с таким ID
+
+    Args:
+        volunteer_id: ID волонтёра в БД
+
+    Returns:
+        True если существует, False если нет
+    """
+    async with SessionLocal() as session:
+        volunteer = await session.get(User_volunteer, volunteer_id)
+        return volunteer is not None
         

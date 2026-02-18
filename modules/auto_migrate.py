@@ -61,10 +61,21 @@ async def check_and_migrate():
                 logger.info("Added column 'added_by' to user_volunteer")
 
             if migrations_applied:
-                logger.info(f"Migrations applied: {migrations_applied}")
+                logger.info(f"Migrations applied for user_volunteer: {migrations_applied}")
             else:
-                logger.info("No migrations needed")
+                logger.info("No migrations needed for user_volunteer")
         else:
             logger.info("Table user_volunteer not found, will be created by SQLAlchemy")
+
+        # Проверяем таблицу user — поле volunteer_id
+        user_columns = await conn.run_sync(
+            lambda sync_conn: get_columns(sync_conn, 'user')
+        )
+
+        if user_columns and 'volunteer_id' not in user_columns:
+            await conn.execute(text(
+                "ALTER TABLE user ADD COLUMN volunteer_id INTEGER REFERENCES user_volunteer(id)"
+            ))
+            logger.info("Added column 'volunteer_id' to user")
 
     logger.info("Database migration check complete")

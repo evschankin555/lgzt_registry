@@ -34,6 +34,7 @@ class User(Base):
     registered_at = Column(DateTime, nullable=True)
     blocked_at = Column(DateTime, nullable=True)
     company_id = Column(Integer, ForeignKey("company.id"), nullable=True)
+    volunteer_id = Column(Integer, ForeignKey("user_volunteer.id"), nullable=True)
     tg_id = Column(Integer, nullable=True)
     company = relationship("Company", back_populates="users")
 

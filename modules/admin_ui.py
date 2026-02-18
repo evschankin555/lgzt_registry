@@ -1099,13 +1099,17 @@ async def show_add_volunteer_prompt(bot: AsyncTeleBot, chat_id: int, message_id:
         await safe_send_message(bot, chat_id, text, reply_markup=keyboard)
 
 
-async def show_volunteer_added(bot: AsyncTeleBot, chat_id: int, volunteer_tg_id: int, success: bool):
+async def show_volunteer_added(bot: AsyncTeleBot, chat_id: int, volunteer_tg_id: int, result):
     """
     Показать результат добавления волонтера
+
+    Args:
+        result: volunteer.id (int) если добавлен, False если уже существует
     """
-    if success:
+    if result:
         text = (
             f"✅ <b>Волонтер добавлен</b>\n\n"
+            f"Номер волонтера: <b>{result}</b>\n"
             f"Telegram ID: <code>{volunteer_tg_id}</code>\n\n"
             f"Теперь этот пользователь может регистрировать людей."
         )
@@ -1215,8 +1219,8 @@ def build_volunteers_list_keyboard(volunteers: List[dict], page: int, total: int
     keyboard = InlineKeyboardMarkup(row_width=1)
 
     for v in volunteers:
-        name = v['name'] or f"ID: {v['tg_id']}"
-        btn_text = f"🙋 {name}"
+        name = v['name'] or f"tg: {v['tg_id']}"
+        btn_text = f"🙋 #{v['id']} {name}"
         if len(btn_text) > 50:
             btn_text = btn_text[:47] + "..."
         keyboard.add(
