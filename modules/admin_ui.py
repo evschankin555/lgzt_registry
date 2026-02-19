@@ -721,7 +721,7 @@ async def get_user_detail(user_id: int) -> Optional[dict]:
         }
 
 
-def build_user_card_keyboard(user_id: int, company_id: Optional[int] = None) -> InlineKeyboardMarkup:
+def build_user_card_keyboard(user_id: int, company_id: Optional[int] = None, status: str = None) -> InlineKeyboardMarkup:
     """
     Построить клавиатуру карточки пользователя
     """
@@ -732,6 +732,11 @@ def build_user_card_keyboard(user_id: int, company_id: Optional[int] = None) -> 
         InlineKeyboardButton("✏️ Изменить предпр.", callback_data=f"edit_user_company_{user_id}"),
         InlineKeyboardButton("🗑 Удалить", callback_data=f"delete_user_{user_id}")
     )
+
+    if status and status != 'not registered':
+        keyboard.add(
+            InlineKeyboardButton("🔄 Сбросить статус", callback_data=f"reset_status_{user_id}")
+        )
 
     # Навигация
     nav_buttons = []
@@ -794,7 +799,7 @@ async def show_user_card(bot: AsyncTeleBot, chat_id: int, message_id: int, user_
     if user['blocked_at']:
         text += f"\n🚫 Заблокирован: {user['blocked_at'].strftime('%d.%m.%Y %H:%M')}"
 
-    keyboard = build_user_card_keyboard(user_id, user['company_id'])
+    keyboard = build_user_card_keyboard(user_id, user['company_id'], user['status'])
 
     await safe_edit_message(bot, chat_id, message_id, text, reply_markup=keyboard)
 
@@ -1685,6 +1690,18 @@ async def delete_user(user_id: int) -> Optional[str]:
         return user_name
 
 
+async def reset_user_status(user_id: int) -> bool:
+    """Сбросить статус пользователя на 'not registered'"""
+    async with SessionLocal() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            return False
+        user.status = 'not registered'
+        user.tg_id = None
+        await session.commit()
+        return True
+
+
 async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
     """
     Обработчик callback'ов админ-панели
@@ -1829,6 +1846,16 @@ async def handle_admin_callback(call: CallbackQuery, bot: AsyncTeleBot):
                 # Логируем действие
                 log_user_delete(user_id, user_db_id, user_name)
                 await bot.answer_callback_query(call.id, "✅ Пользователь удален")
+                await show_user_card(bot, chat_id, message_id, user_db_id)
+            else:
+                await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
+
+        # Сброс статуса пользователя
+        elif data.startswith("reset_status_"):
+            user_db_id = int(data.split("_")[2])
+            success = await reset_user_status(user_db_id)
+            if success:
+                await bot.answer_callback_query(call.id, "✅ Статус сброшен")
                 await show_user_card(bot, chat_id, message_id, user_db_id)
             else:
                 await bot.answer_callback_query(call.id, "❌ Ошибка", show_alert=True)
