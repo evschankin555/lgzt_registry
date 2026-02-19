@@ -1275,38 +1275,15 @@ def build_volunteers_list_keyboard(volunteers: List[dict], page: int, total: int
 
 
 async def get_volunteers_stats() -> dict:
-    """
-    Получить статистику регистраций/аннуляций по каждому волонтёру.
-    Возвращает {volunteer_id: {'registered': N, 'deleted': M}}
-    """
+    """Получить статистику регистраций по каждому волонтёру."""
     async with SessionLocal() as session:
-        # Зарегистрированные (статус registered)
-        reg_stmt = (
+        stmt = (
             select(User.volunteer_id, func.count(User.id))
             .where(User.volunteer_id.isnot(None), User.status == 'registered')
             .group_by(User.volunteer_id)
         )
-        reg_result = await session.execute(reg_stmt)
-        reg_rows = reg_result.all()
-
-        # Удалённые (статус deleted)
-        del_stmt = (
-            select(User.volunteer_id, func.count(User.id))
-            .where(User.volunteer_id.isnot(None), User.status == 'deleted')
-            .group_by(User.volunteer_id)
-        )
-        del_result = await session.execute(del_stmt)
-        del_rows = del_result.all()
-
-        stats = {}
-        for vol_id, cnt in reg_rows:
-            stats.setdefault(vol_id, {'registered': 0, 'deleted': 0})
-            stats[vol_id]['registered'] = cnt
-        for vol_id, cnt in del_rows:
-            stats.setdefault(vol_id, {'registered': 0, 'deleted': 0})
-            stats[vol_id]['deleted'] = cnt
-
-        return stats
+        result = await session.execute(stmt)
+        return {vol_id: cnt for vol_id, cnt in result.all()}
 
 
 async def show_volunteers_list(bot: AsyncTeleBot, chat_id: int, message_id: Optional[int], page: int = 0):
@@ -1324,9 +1301,9 @@ async def show_volunteers_list(bot: AsyncTeleBot, chat_id: int, message_id: Opti
         text += "\n📊 <b>Статистика:</b>\n"
         for v in volunteers:
             name = v['name'] or f"tg: {v['tg_id']}"
-            s = stats.get(v['id'], {'registered': 0, 'deleted': 0})
-            text += f"  #{v['id']} {name} — ✅ {s['registered']} / ❌ {s['deleted']}\n"
-        text += "\n<i>✅ зарегистрировал / ❌ аннулировал</i>\n"
+            cnt = stats.get(v['id'], 0)
+            text += f"  #{v['id']} {name} — ✅ {cnt}\n"
+        text += "\n<i>✅ зарегистрировал</i>\n"
 
     if not volunteers:
         text += "\nСписок пуст. Добавьте волонтера кнопкой ниже."
