@@ -39,6 +39,7 @@ async def start(msg):
         await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.admin_menu)
 
     elif await is_volunteer(user_id):
+        await update_volunteer_tg_name(user_id, msg.from_user.first_name, msg.from_user.last_name)
         await bot.send_message(chat_id=msg.chat.id, text='Привет, волонтер! Ты можешь регистрировать пользователей. Для старта регистрации нажми кнопку "регистрация"', reply_markup=markup_default_volunteer)
 
     else:

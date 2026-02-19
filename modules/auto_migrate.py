@@ -60,6 +60,14 @@ async def check_and_migrate():
                 migrations_applied.append('added_by')
                 logger.info("Added column 'added_by' to user_volunteer")
 
+            # Проверяем и добавляем поле name_manual
+            if 'name_manual' not in existing_columns:
+                await conn.execute(text(
+                    "ALTER TABLE user_volunteer ADD COLUMN name_manual INTEGER DEFAULT 0"
+                ))
+                migrations_applied.append('name_manual')
+                logger.info("Added column 'name_manual' to user_volunteer")
+
             if migrations_applied:
                 logger.info(f"Migrations applied for user_volunteer: {migrations_applied}")
             else:

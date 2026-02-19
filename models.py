@@ -59,6 +59,7 @@ class User_volunteer(Base):
 
     id = Column(Integer, primary_key=True)
     tg_id = Column(Integer, nullable=True)
-    name = Column(String(255), nullable=True)  # Имя волонтера (опционально)
-    added_at = Column(DateTime, nullable=True)  # Дата добавления
-    added_by = Column(Integer, nullable=True)  # Telegram ID админа, который добавил
+    name = Column(String(255), nullable=True)
+    name_manual = Column(Integer, default=0)  # 1 если имя задано вручную
+    added_at = Column(DateTime, nullable=True)
+    added_by = Column(Integer, nullable=True)

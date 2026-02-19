@@ -564,6 +564,21 @@ async def is_volunteer(user_tg_id):
             return True
 
 
+async def update_volunteer_tg_name(tg_id: int, first_name: str, last_name: str = None):
+    """Обновить имя волонтёра из Telegram, если оно не задано вручную"""
+    async with SessionLocal() as session:
+        stmt = select(User_volunteer).where(User_volunteer.tg_id == tg_id)
+        result = await session.execute(stmt)
+        volunteer = result.scalars().one_or_none()
+
+        if volunteer and not volunteer.name_manual:
+            tg_name = first_name
+            if last_name:
+                tg_name += f" {last_name}"
+            volunteer.name = tg_name
+            await session.commit()
+
+
 async def check_volunteer_exists(volunteer_id: int) -> bool:
     """
     Проверить существует ли волонтёр с таким ID
