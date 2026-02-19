@@ -53,7 +53,7 @@ async def send_code(phone_number):
     message = f"Ваш код для подтверждения: {code}"
 
     async with aiohttp.ClientSession() as session:
-        async with session.post(url=f'https://smsc.ru/sys/send.php?login=lgjt&psw=123456&phones={phone_number}&mes={message}') as response:
+        async with session.post(url=f'https://smsc.ru/sys/send.php?login=lgjt&psw=123456&phones={phone_number}&mes={message}&sender=kotelnikiru') as response:
 
             response_text = await response.text()
 
