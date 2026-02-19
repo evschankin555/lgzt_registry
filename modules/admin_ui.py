@@ -735,7 +735,7 @@ def build_user_card_keyboard(user_id: int, company_id: Optional[int] = None, sta
 
     if status and status != 'not registered':
         keyboard.add(
-            InlineKeyboardButton("🔄 Сбросить статус", callback_data=f"reset_status_{user_id}")
+            InlineKeyboardButton("🔄 Незарегистрированный", callback_data=f"reset_status_{user_id}")
         )
 
     # Навигация

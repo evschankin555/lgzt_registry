@@ -591,7 +591,7 @@ async def callback(call):
         'edit_user_company_', 'sel_comp_page_', 'set_company_',
         'delete_user_', 'confirm_delete_', 'search_page_', 'search_comp_page_',
         'volunteers_page_', 'volunteer_', 'delete_volunteer_',
-        'confirm_del_volunteer_', 'edit_volunteer_name_'
+        'confirm_del_volunteer_', 'edit_volunteer_name_', 'reset_status_'
     ]
 
     if call.data in admin_ui_callbacks or any(call.data.startswith(p) for p in admin_ui_prefixes):
