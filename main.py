@@ -45,14 +45,14 @@ async def start(msg):
         # Обычный пользователь
         # Если это developer в режиме user, показываем кнопку переключения (только в dev режиме)
         if is_developer(user_id) and not PRODUCTION_MODE:
-            await bot.send_message(chat_id=msg.chat.id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(chat_id=msg.chat.id, text="Добрый день! Это бот по регистрации актива г.о.Котельники. Заполните, пожалуйста, все поля и подтвердите номер телефона!", reply_markup=markup_default)
             await bot.send_message(
                 chat_id=msg.chat.id,
                 text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
                 reply_markup=markup_switch_to_admin
             )
         else:
-            await bot.send_message(chat_id=msg.chat.id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(chat_id=msg.chat.id, text="Добрый день! Это бот по регистрации актива г.о.Котельники. Заполните, пожалуйста, все поля и подтвердите номер телефона!", reply_markup=markup_default)
 
 
 
@@ -721,7 +721,7 @@ async def callback(call):
                 await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
             except:
                 pass
-            await bot.send_message(chat_id=user_id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(chat_id=user_id, text="Добрый день! Это бот по регистрации актива г.о.Котельники. Заполните, пожалуйста, все поля и подтвердите номер телефона!", reply_markup=markup_default)
             await bot.send_message(
                 chat_id=user_id,
                 text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
@@ -886,7 +886,7 @@ async def callback(call):
             except:
                 pass
             # Имитируем /start
-            await bot.send_message(chat_id=user_id, text="Приветствую. Я могу зарегистрировать вас в XYZ.", reply_markup=markup_default)
+            await bot.send_message(chat_id=user_id, text="Добрый день! Это бот по регистрации актива г.о.Котельники. Заполните, пожалуйста, все поля и подтвердите номер телефона!", reply_markup=markup_default)
             await bot.send_message(
                 chat_id=user_id,
                 text="🔧 Режим разработчика: ПОЛЬЗОВАТЕЛЬ\nНажмите для переключения в режим админа:",
