@@ -266,6 +266,10 @@ async def check_sms(msg):
         code_from_backend = data.get('code')
 
     if code_from_user == code_from_backend:
+        async with bot.retrieve_data(user_id=msg.from_user.id, chat_id=msg.chat.id) as data:
+            data['sms_code'] = code_from_user
+            data['sms_confirmed_at'] = datetime.now().isoformat()
+
         # Шаг 6: Адрес проживания
         text = get_step_text(6)
         await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')

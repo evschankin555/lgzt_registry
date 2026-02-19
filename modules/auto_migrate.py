@@ -78,4 +78,16 @@ async def check_and_migrate():
             ))
             logger.info("Added column 'volunteer_id' to user")
 
+        if user_columns and 'sms_code' not in user_columns:
+            await conn.execute(text(
+                "ALTER TABLE user ADD COLUMN sms_code VARCHAR(10)"
+            ))
+            logger.info("Added column 'sms_code' to user")
+
+        if user_columns and 'sms_confirmed_at' not in user_columns:
+            await conn.execute(text(
+                "ALTER TABLE user ADD COLUMN sms_confirmed_at DATETIME"
+            ))
+            logger.info("Added column 'sms_confirmed_at' to user")
+
     logger.info("Database migration check complete")

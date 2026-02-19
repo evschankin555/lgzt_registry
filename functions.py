@@ -173,6 +173,10 @@ async def register_user(user_botdata) -> True | False:
             user.registered_at = registered_at
             user.tg_id = tg_id
             user.volunteer_id = user_botdata.get('volunteer_id')
+            user.sms_code = user_botdata.get('sms_code')
+            sms_ts = user_botdata.get('sms_confirmed_at')
+            if sms_ts:
+                user.sms_confirmed_at = datetime.fromisoformat(sms_ts)
             await session.commit()
 
             await session.refresh(user)
@@ -210,6 +214,12 @@ async def prepare_user_info(user_id):
             registered_at = datetime.strftime(user.registered_at, "%d %m %Y %H:%M")
 
             user_info = f"ID - {user.id}\n\nФИО - {user.last_name} {user.first_name} {user.father_name}\n\nДата рождения - {user.date_of_birth}\n\nНомер телефона - {user.phone_number}\n\nАдрес - {user.address}\n\nПредприятие - {company_name}\n\nВремя и дата регистрации - {registered_at}"
+
+            if user.volunteer_id:
+                volunteer = await session.get(User_volunteer, user.volunteer_id)
+                if volunteer:
+                    vol_name = volunteer.name or f"#{volunteer.id}"
+                    user_info += f"\n\nВолонтёр - {vol_name}"
 
             return user_info
 
@@ -438,6 +448,12 @@ async def prepare_user_info_for_admin(user_id):
                 registered_at = 'Еще не загеристрирован'
 
             user_info = f"ID - {user.id}\n\nФИО - {user.last_name} {user.first_name} {user.father_name}\n\nСерия номер паспорта - {user.passport_number}\n\nДата рождения - {user.date_of_birth}\n\nНомер телефона - {user.phone_number}\n\nАдрес - {user.address}\n\n<b>Предприятие - {company_name}</b>\n\nВремя и дата регистрации - {registered_at}\n\n<b>Статус - {user.status}</b>"
+
+            if user.volunteer_id:
+                volunteer = await session.get(User_volunteer, user.volunteer_id)
+                if volunteer:
+                    vol_name = volunteer.name or f"#{volunteer.id}"
+                    user_info += f"\n\nВолонтёр - {vol_name}"
 
             return user_info
 

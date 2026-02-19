@@ -7,7 +7,7 @@ from typing import Tuple, List, Optional, Dict, Any
 from datetime import datetime
 from telebot.async_telebot import types
 from db import SessionLocal
-from models import User, Company
+from models import User, Company, User_volunteer
 from sqlalchemy import select, func
 
 # Константы
@@ -284,6 +284,10 @@ def format_user_profile(user_data: Dict[str, Any]) -> str:
 📆 <b>Дата регистрации</b>
    {registered}"""
 
+    volunteer = user_data.get('volunteer_name')
+    if volunteer:
+        profile += f"\n\n🤝 <b>Волонтёр</b>\n   {volunteer}"
+
     return profile
 
 
@@ -309,6 +313,12 @@ async def get_user_profile_data(user_id: int) -> Optional[Dict[str, Any]]:
             if company:
                 company_name = company.name
 
+        volunteer_name = None
+        if user.volunteer_id:
+            volunteer = await session.get(User_volunteer, user.volunteer_id)
+            if volunteer:
+                volunteer_name = volunteer.name or f"#{volunteer.id}"
+
         return {
             'id': user.id,
             'last_name': user.last_name,
@@ -320,6 +330,7 @@ async def get_user_profile_data(user_id: int) -> Optional[Dict[str, Any]]:
             'company_name': company_name,
             'registered_at': user.registered_at,
             'status': user.status,
+            'volunteer_name': volunteer_name,
         }
 
 

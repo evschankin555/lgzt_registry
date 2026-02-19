@@ -693,6 +693,13 @@ async def get_user_detail(user_id: int) -> Optional[dict]:
         if not user:
             return None
 
+        # Получаем имя волонтёра
+        volunteer_name = None
+        if user.volunteer_id:
+            volunteer = await session.get(User_volunteer, user.volunteer_id)
+            if volunteer:
+                volunteer_name = volunteer.name or f"#{volunteer.id}"
+
         return {
             'id': user.id,
             'last_name': user.last_name,
@@ -706,7 +713,11 @@ async def get_user_detail(user_id: int) -> Optional[dict]:
             'company_id': user.company_id,
             'company_name': user.company.name if user.company else 'Не назначено',
             'registered_at': user.registered_at,
-            'blocked_at': user.blocked_at
+            'blocked_at': user.blocked_at,
+            'volunteer_id': user.volunteer_id,
+            'volunteer_name': volunteer_name,
+            'sms_code': user.sms_code,
+            'sms_confirmed_at': user.sms_confirmed_at
         }
 
 
@@ -771,6 +782,14 @@ async def show_user_card(bot: AsyncTeleBot, chat_id: int, message_id: int, user_
         f"🏠 Адрес: {user['address']}\n\n"
         f"📝 Дата регистрации: {reg_str}"
     )
+
+    if user.get('volunteer_name'):
+        text += f"\n🤝 Волонтёр: {user['volunteer_name']}"
+
+    if user.get('sms_confirmed_at'):
+        sms_time = user['sms_confirmed_at'].strftime('%d.%m.%Y %H:%M')
+        sms_code = user.get('sms_code') or '—'
+        text += f"\n✅ SMS подтверждён: {sms_time} (код: {sms_code})"
 
     if user['blocked_at']:
         text += f"\n🚫 Заблокирован: {user['blocked_at'].strftime('%d.%m.%Y %H:%M')}"

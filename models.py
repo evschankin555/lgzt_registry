@@ -33,6 +33,8 @@ class User(Base):
     status = Column(Enum("registered", "not registered", "blocked", "deleted", name="user_status"), default="not registered")
     registered_at = Column(DateTime, nullable=True)
     blocked_at = Column(DateTime, nullable=True)
+    sms_code = Column(String(10), nullable=True)
+    sms_confirmed_at = Column(DateTime, nullable=True)
     company_id = Column(Integer, ForeignKey("company.id"), nullable=True)
     volunteer_id = Column(Integer, ForeignKey("user_volunteer.id"), nullable=True)
     tg_id = Column(Integer, nullable=True)
