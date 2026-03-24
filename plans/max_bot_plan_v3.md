@@ -395,13 +395,34 @@ MVP-вариант:
 
 ## 11. MAX transport layer
 
-## 10.1. Отдельный MAX-сервис
-Новый сервис:
-- `lgzt_registry-max-bot`
+## 10.1. Базовый вариант внедрения
+На первом этапе MAX webhook встраивается в уже существующий `registry-dashboard` backend.
+
+Внешний маршрут:
+- `/registry-api/max/*`
+
+Внутренний FastAPI маршрут:
+- `/api/max/*`
+
+Почему:
+- уже есть рабочий FastAPI backend
+- уже есть домен и nginx-контур
+- быстрее поднять webhook и собрать реальные payload samples
+- меньше инфраструктурных изменений на ранних фазах
+
+Отдельный сервис для MAX допустим позже, если:
+- появится отдельная фоновая обработка
+- понадобится отдельный lifecycle и scaling
+- нагрузка на webhook контур вырастет
 
 ## 10.2. Реализация
 
-### `max_bot/client.py`
+### В существующем backend
+FastAPI endpoints:
+- `GET /api/max/health`
+- `POST /api/max/webhook`
+
+### MAX client module
 Методы:
 - `send_message`
 - `edit_message`
@@ -410,10 +431,6 @@ MVP-вариант:
 - `set_webhook`
 - `delete_webhook`
 - `get_updates` для dev-режима
-
-### `max_bot/app.py`
-FastAPI webhook endpoint:
-- `POST /max-bot/webhook`
 
 ### Безопасность webhook
 Приоритет:
@@ -504,7 +521,7 @@ FastAPI webhook endpoint:
 - текущий бот продолжает работать, но уже сидит на новой архитектуре
 
 ## Фаза 4. MAX MVP
-1. поднять `max_bot/app.py`
+1. расширить existing backend routes и обработку MAX update
 2. реализовать `MaxClient`
 3. реализовать старт и routing
 4. реализовать registration flow
@@ -539,8 +556,9 @@ FastAPI webhook endpoint:
 ## Фаза 0. Безопасность и technical spike
 
 ### Артефакты
-- `max_bot/config.py`
-- `max_bot/app.py`
+- `registry_dashboard/backend/main.py` MAX endpoints
+- `registry_dashboard/backend/config.py` MAX config
+- nginx/service deployment updates для env и public prefix
 - env placeholders для MAX
 - папка для фиксации payload samples
 
@@ -551,7 +569,7 @@ FastAPI webhook endpoint:
 - локальный импорт и запуск каркаса проходят без ошибок
 
 ### Проверки
-- импорт `max_bot.app` проходит
+- импорт `registry_dashboard/backend/main.py` проходит
 - health endpoint отвечает
 - POST на webhook без секрета отклоняется
 - POST на webhook с секретом принимается

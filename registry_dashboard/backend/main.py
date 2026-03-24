@@ -1,12 +1,14 @@
 """
 FastAPI backend для Registry Dashboard
 """
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime, timedelta, timezone
+from typing import Any, Optional, List
+from datetime import datetime, timedelta
+import json
+import logging
 import sys
 from pathlib import Path
 
@@ -18,9 +20,16 @@ from sqlalchemy import select, func, update, delete
 from db import SessionLocal
 from models import User, Company, User_volunteer
 from auth import create_access_token, verify_password, get_current_user
-from config import API_PREFIX, CORS_ORIGINS
+from config import (
+    API_PREFIX,
+    CORS_ORIGINS,
+    MAX_API_PREFIX,
+    MAX_WEBHOOK_SECRET,
+    MAX_DEBUG_LOG_PAYLOADS,
+)
 
 app = FastAPI(title="Registry Dashboard API")
+logger = logging.getLogger(__name__)
 
 # CORS
 app.add_middleware(
@@ -47,6 +56,14 @@ class UserUpdate(BaseModel):
     company_id: Optional[int] = None
     status: Optional[str] = None
 
+
+def _extract_max_update_type(payload: dict[str, Any]) -> str:
+    for key in ("update_type", "type", "event_type"):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return "unknown"
+
 # ===== АВТОРИЗАЦИЯ =====
 
 @app.post(f"{API_PREFIX}/login", response_model=LoginResponse)
@@ -64,7 +81,7 @@ async def login(request: LoginRequest):
 async def get_stats(current_user: dict = Depends(get_current_user)):
     """Получить статистику"""
     async with SessionLocal() as session:
-        now = datetime.now(timezone.utc)
+        now = datetime.utcnow()
 
         # Общее количество
         total_stmt = select(func.count(User.id))
@@ -397,6 +414,51 @@ async def export_excel(current_user: dict = Depends(get_current_user)):
         filename="registry_export.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# ===== MAX WEBHOOK =====
+
+@app.get(f"{MAX_API_PREFIX}/health")
+async def max_health():
+    """Публичный healthcheck для MAX интеграции"""
+    return {
+        "status": "ok",
+        "service": "registry-max-webhook",
+    }
+
+
+@app.post(f"{MAX_API_PREFIX}/webhook")
+async def max_webhook(
+    request: Request,
+    x_max_bot_api_secret: str | None = Header(default=None),
+    secret: str | None = None,
+):
+    """Публичный webhook endpoint для MAX"""
+    if MAX_WEBHOOK_SECRET:
+        if x_max_bot_api_secret != MAX_WEBHOOK_SECRET and secret != MAX_WEBHOOK_SECRET:
+            raise HTTPException(status_code=403, detail="Invalid MAX webhook secret")
+
+    body = await request.body()
+    try:
+        payload = json.loads(body.decode("utf-8") if body else "{}")
+    except json.JSONDecodeError as exc:
+        logger.warning("MAX webhook received invalid JSON: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    update_type = _extract_max_update_type(payload)
+
+    if MAX_DEBUG_LOG_PAYLOADS:
+        logger.info(
+            "MAX webhook payload type=%s payload=%s",
+            update_type,
+            json.dumps(payload, ensure_ascii=False),
+        )
+    else:
+        logger.info("MAX webhook payload type=%s", update_type)
+
+    return {
+        "ok": True,
+        "update_type": update_type,
+    }
 
 # ===== HEALTHCHECK =====
 

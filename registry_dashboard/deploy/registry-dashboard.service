@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/var/www/lgzt_registry/registry_dashboard/backend
+EnvironmentFile=/var/www/lgzt_registry/.env
 Environment="PATH=/var/www/lgzt_registry/registry_dashboard/backend/venv/bin"
 ExecStart=/var/www/lgzt_registry/registry_dashboard/backend/venv/bin/python main.py
 Restart=always

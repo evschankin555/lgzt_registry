@@ -23,8 +23,18 @@ JWT_EXPIRATION_HOURS = 24
 
 # API
 API_PREFIX = "/api"
+MAX_API_PREFIX = f"{API_PREFIX}/max"
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
     "https://lgzt.developing-site.ru",
 ]
+
+# MAX webhook
+MAX_WEBHOOK_SECRET = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
+MAX_DEBUG_LOG_PAYLOADS = os.getenv("MAX_DEBUG_LOG_PAYLOADS", "false").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
