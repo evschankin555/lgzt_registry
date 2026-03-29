@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "reports": {
+      "type": "sse",
+      "url": "https://tpl.developing-site.ru/mcp/sse"
+    }
+  }
+}

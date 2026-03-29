@@ -23,13 +23,17 @@ from auth import create_access_token, verify_password, get_current_user
 from config import (
     API_PREFIX,
     CORS_ORIGINS,
+    MAX_API_BASE_URL,
     MAX_API_PREFIX,
+    MAX_BOT_TOKEN,
     MAX_WEBHOOK_SECRET,
     MAX_DEBUG_LOG_PAYLOADS,
 )
+from max_bot import MaxBotService, MaxClient
 
 app = FastAPI(title="Registry Dashboard API")
 logger = logging.getLogger(__name__)
+max_bot_service = MaxBotService(MaxClient(token=MAX_BOT_TOKEN, base_url=MAX_API_BASE_URL))
 
 # CORS
 app.add_middleware(
@@ -423,6 +427,7 @@ async def max_health():
     return {
         "status": "ok",
         "service": "registry-max-webhook",
+        "bot_configured": bool(MAX_BOT_TOKEN),
     }
 
 
@@ -455,9 +460,20 @@ async def max_webhook(
     else:
         logger.info("MAX webhook payload type=%s", update_type)
 
+    if not MAX_BOT_TOKEN:
+        logger.error("MAX webhook received update, but MAX_BOT_TOKEN is not configured")
+        raise HTTPException(status_code=500, detail="MAX_BOT_TOKEN is not configured")
+
+    try:
+        result = await max_bot_service.handle_update(payload)
+    except Exception as exc:
+        logger.exception("MAX webhook processing failed for update_type=%s", update_type)
+        raise HTTPException(status_code=500, detail="MAX webhook processing failed") from exc
+
     return {
         "ok": True,
         "update_type": update_type,
+        "result": result,
     }
 
 # ===== HEALTHCHECK =====

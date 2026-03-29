@@ -31,6 +31,8 @@ CORS_ORIGINS = [
 ]
 
 # MAX webhook
+MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN", "").strip()
+MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").strip().rstrip("/")
 MAX_WEBHOOK_SECRET = os.getenv("MAX_WEBHOOK_SECRET", "").strip()
 MAX_DEBUG_LOG_PAYLOADS = os.getenv("MAX_DEBUG_LOG_PAYLOADS", "false").strip().lower() in {
     "1",

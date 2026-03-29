@@ -1,5 +1,4 @@
 from telebot.asyncio_handler_backends import StatesGroup, State
-from telebot.asyncio_storage import StateMemoryStorage
 from telebot.async_telebot import types
 from dotenv import load_dotenv
 import os
@@ -7,6 +6,7 @@ from pathlib import Path
 import shutil
 from telebot import async_telebot, asyncio_filters
 from emoji import emojize
+from modules.db_state_storage import DbStateStorage
 
 # Автоматическое создание .env из example.env если .env не существует
 env_path = Path('.env')
@@ -19,7 +19,7 @@ if not env_path.exists() and example_env_path.exists():
 load_dotenv()
 tg_bot_api_key = os.environ.get('telegram_bot_api')
 
-bot = async_telebot.AsyncTeleBot(tg_bot_api_key, state_storage=StateMemoryStorage())
+bot = async_telebot.AsyncTeleBot(tg_bot_api_key, state_storage=DbStateStorage())
 
 surname_check_text = """Пожалуйста, отправьте мне фамилию, я найду ее в базе."""
 

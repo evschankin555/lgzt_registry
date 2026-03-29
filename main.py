@@ -1,5 +1,6 @@
 import os
 import asyncio
+import logging
 from vars import *
 from vars import PRODUCTION_MODE
 from functions import *
@@ -19,15 +20,56 @@ from modules.user_ui import (
     show_company_selection, get_step_text
 )
 from modules.auto_migrate import check_and_migrate
+from services.platform import sync_telegram_platform_data
 
 # Настройка логирования
 setup_logging()
+logger = logging.getLogger(__name__)
+
+
+def _repair_text_encoding(text: str) -> str:
+    """
+    Попытаться восстановить типичную mojibake-перекодировку (UTF-8 -> latin1/cp1251).
+    """
+    if not text:
+        return ""
+
+    candidates = [text]
+    for src, dst in (("latin1", "utf-8"), ("cp1251", "utf-8")):
+        try:
+            candidates.append(text.encode(src).decode(dst))
+        except UnicodeError:
+            continue
+
+    def cyrillic_score(value: str) -> int:
+        value = value.lower()
+        return sum(1 for ch in value if ("а" <= ch <= "я") or ch == "ё")
+
+    repaired = max(candidates, key=cyrillic_score)
+    if repaired != text:
+        logger.warning("Detected mojibake input: original=%r repaired=%r", text, repaired)
+    return repaired
+
+
+def _normalize_user_text(text: str) -> str:
+    repaired = _repair_text_encoding((text or "").strip())
+    normalized = " ".join(repaired.split()).lower()
+    return normalized.replace("ё", "е")
+
+
+def _is_registration_trigger(text: str) -> bool:
+    return _normalize_user_text(text) in {"регистрация", "/регистрация"}
+
+
+def _is_profile_trigger(text: str) -> bool:
+    return _normalize_user_text(text) in {"мой профиль", "профиль", "/профиль"}
 
 
 @bot.message_handler(['start'])
 async def start(msg):
 
     user_id = msg.from_user.id
+    await bot.delete_state(user_id=user_id, chat_id=msg.chat.id)
 
     # Проверяем, показывать ли админ-интерфейс
     # Для developer учитывается текущий режим (admin/user)
@@ -36,7 +78,7 @@ async def start(msg):
     if show_admin:
         # Используем новое компактное админ-меню с одним сообщением
         await show_admin_menu(bot, msg.chat.id, user_id)
-        await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.admin_menu)
+        await bot.set_state(user_id=user_id, chat_id=msg.chat.id, state=MyStates.admin_menu)
 
     elif await is_volunteer(user_id):
         await update_volunteer_tg_name(user_id, msg.from_user.first_name, msg.from_user.last_name)
@@ -57,9 +99,10 @@ async def start(msg):
 
 
 
-@bot.message_handler(content_types='text', regexp='Регистрация')
+@bot.message_handler(content_types='text', func=lambda message: _is_registration_trigger(message.text), state='*')
 async def start_signup(msg):
 
+    await bot.delete_state(user_id=msg.from_user.id, chat_id=msg.chat.id)
     user_tg_id = int(msg.from_user.id)
 
     user_id_in_db = await find_user_by_tg_id(user_tg_id)
@@ -73,9 +116,9 @@ async def start_signup(msg):
     else:
         text = "Введите номер волонтёра (если есть), или нажмите «Пропустить»."
         await bot.send_message(chat_id=msg.chat.id, text=text, reply_markup=markup_skip_volunteer_id)
-        await bot.set_state(user_id=msg.chat.id, chat_id=msg.from_user.id, state=MyStates.handle_volunteer_id)
+        await bot.set_state(user_id=msg.from_user.id, chat_id=msg.chat.id, state=MyStates.handle_volunteer_id)
 
-@bot.message_handler(content_types='text', regexp='Мой профиль')
+@bot.message_handler(content_types='text', func=lambda message: _is_profile_trigger(message.text), state='*')
 async def show_profile(msg):
 
     user_tg_id = int(msg.from_user.id)
@@ -246,6 +289,14 @@ async def handle_phone_number(msg):
 
     # send an SMS code ...
     code = await send_code(phone_number)
+    if not code:
+        text = format_error_message(
+            "Проблема с SMS",
+            "Не удалось отправить код подтверждения.",
+            "Попробуйте еще раз через минуту"
+        )
+        await bot.send_message(chat_id=msg.chat.id, text=text, parse_mode='HTML')
+        return
 
     async with bot.retrieve_data(user_id=msg.from_user.id, chat_id=msg.chat.id) as data:
         data['code'] = code
@@ -576,7 +627,7 @@ async def admin_handle_company_search(msg):
     MyStates.admin_search_companies,  # Для обработки кнопки "Назад" при поиске предприятий
     MyStates.admin_edit_volunteer_name
 ])
-async def callback(call):
+async def callback_admin_state(call):
 
     user_id = call.from_user.id
 
@@ -758,69 +809,108 @@ async def bot_blocked(mb):
 
 
 
-@bot.callback_query_handler(func=lambda call: True)
-async def callback(call):
+def is_user_flow_callback(call):
+    user_flow_callbacks = {
+        'skip_volunteer_id',
+        'agreed_to_nda',
+        'profile_edit',
+        'correct_info',
+        'correct_info_cancel',
+        'switch_to_user',
+        'switch_to_admin',
+    }
+    return (
+        call.data in user_flow_callbacks
+        or call.data.startswith('reg_comp_page_')
+        or call.data.startswith('reg_company_')
+    )
+
+
+@bot.callback_query_handler(func=is_user_flow_callback, state='*')
+async def callback_any_state(call):
 
     user_id = call.from_user.id
 
     # Обработка выбора предприятия при регистрации (кнопки с пагинацией)
     if call.data.startswith('reg_comp_page_'):
+        await bot.answer_callback_query(call.id)
         page = int(call.data.replace('reg_comp_page_', ''))
         await show_company_selection(bot, call.message.chat.id, page, call.message.message_id)
-        await bot.answer_callback_query(call.id)
         return
 
     if call.data.startswith('reg_company_'):
-        company_id = int(call.data.replace('reg_company_', ''))
+        await bot.answer_callback_query(call.id)
+        try:
+            company_id = int(call.data.replace('reg_company_', ''))
+        except ValueError:
+            text = format_error_message("Ошибка", "Некорректный идентификатор предприятия.")
+            await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+            return
 
-        async with bot.retrieve_data(user_id=user_id, chat_id=call.message.chat.id) as data:
-            user_db_id = data.get('id')
-
-        if await assign_company(user_db_id, company_id):
+        try:
             async with bot.retrieve_data(user_id=user_id, chat_id=call.message.chat.id) as data:
-                if await register_user(data):
-                    # Удаляем сообщение с выбором
-                    try:
-                        await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
-                    except:
-                        pass
+                user_db_id = data.get('id')
 
-                    # Успешная регистрация
-                    success_text = format_success_message(
-                        "Регистрация завершена!",
-                        "Добро пожаловать в систему. Ваш профиль успешно создан."
-                    )
-                    await bot.send_message(chat_id=user_id, text=success_text, parse_mode='HTML')
+            if not user_db_id:
+                text = format_error_message(
+                    "Сессия регистрации устарела",
+                    "Данные регистрации не найдены.",
+                    "Нажмите /start и начните регистрацию заново"
+                )
+                await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+                await bot.delete_state(user_id=user_id, chat_id=call.message.chat.id)
+                return
 
-                    # Показываем профиль
-                    user_data = await get_user_profile_data(user_db_id)
-                    if user_data:
-                        profile_text = format_user_profile(user_data)
-                        await bot.send_message(chat_id=user_id, text=profile_text, parse_mode='HTML')
+            if await assign_company(user_db_id, company_id):
+                async with bot.retrieve_data(user_id=user_id, chat_id=call.message.chat.id) as data:
+                    if await register_user(data):
+                        # Удаляем сообщение с выбором
+                        try:
+                            await bot.delete_message(chat_id=call.message.chat.id, message_id=call.message.message_id)
+                        except:
+                            pass
 
-                    # Кнопка исправления
-                    await bot.send_message(
-                        chat_id=user_id,
-                        text="Если нужно исправить информацию, нажмите кнопку ниже.",
-                        reply_markup=markup_correct_info
-                    )
+                        # Успешная регистрация
+                        success_text = format_success_message(
+                            "Регистрация завершена!",
+                            "Добро пожаловать в систему. Ваш профиль успешно создан."
+                        )
+                        await bot.send_message(chat_id=user_id, text=success_text, parse_mode='HTML')
 
-                    if await is_volunteer(user_id):
+                        # Показываем профиль
+                        user_data = await get_user_profile_data(user_db_id)
+                        if user_data:
+                            profile_text = format_user_profile(user_data)
+                            await bot.send_message(chat_id=user_id, text=profile_text, parse_mode='HTML')
+
+                        # Кнопка исправления
                         await bot.send_message(
                             chat_id=user_id,
-                            text='Для начала следующей регистрации нажмите кнопку "Регистрация".',
-                            reply_markup=markup_default_volunteer
+                            text="Если нужно исправить информацию, нажмите кнопку ниже.",
+                            reply_markup=markup_correct_info
                         )
 
-                    await bot.delete_state(user_id=user_id, chat_id=call.message.chat.id)
-                else:
-                    text = format_error_message("Ошибка", "Регистрация не удалась.")
-                    await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
-        else:
-            text = format_error_message("Ошибка", "Не удалось выбрать предприятие.")
-            await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+                        if await is_volunteer(user_id):
+                            await bot.send_message(
+                                chat_id=user_id,
+                                text='Для начала следующей регистрации нажмите кнопку "Регистрация".',
+                                reply_markup=markup_default_volunteer
+                            )
 
-        await bot.answer_callback_query(call.id)
+                        await bot.delete_state(user_id=user_id, chat_id=call.message.chat.id)
+                    else:
+                        text = format_error_message("Ошибка", "Регистрация не удалась.")
+                        await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+            else:
+                text = format_error_message("Ошибка", "Не удалось выбрать предприятие.")
+                await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
+        except Exception as e:
+            text = format_error_message(
+                "Ошибка при выборе предприятия",
+                str(e),
+                "Попробуйте снова или нажмите /start"
+            )
+            await bot.send_message(chat_id=user_id, text=text, parse_mode='HTML')
         return
 
     if call.data == 'skip_volunteer_id':
@@ -837,9 +927,11 @@ async def callback(call):
         return
 
     if call.data == 'agreed_to_nda':
-        # Показываем выбор предприятия через кнопки
-        await show_company_selection(bot, user_id, page=0)
         await bot.answer_callback_query(call.id)
+        # Показываем выбор предприятия через кнопки
+        await show_company_selection(bot, call.message.chat.id, page=0)
+        await bot.set_state(chat_id=call.message.chat.id, user_id=user_id, state=MyStates.handle_company)
+        return
 
 
     elif call.data == 'profile_edit' or call.data == 'correct_info':
@@ -918,6 +1010,12 @@ async def main():
     """Главная функция запуска бота"""
     # Проверяем и применяем миграции БД
     await check_and_migrate()
+    sync_result = await sync_telegram_platform_data(
+        admin_ids=admin_ids,
+        superadmin_ids=superadmin_ids,
+        developer_ids=developer_ids,
+    )
+    logger.info("Platform foundation sync result: %s", sync_result)
     # Запускаем бота
     await bot.infinity_polling()
 

@@ -1,11 +1,46 @@
 from db import SessionLocal, engine
 from models import User, Company, User_who_blocked, User_volunteer
 from sqlalchemy import select, update, MetaData, func, insert
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import aiohttp
 import pandas as pd
 from random import randint
 from pprint import pprint
+import logging
+import asyncio
+from services.platform import IdentityService, PlatformSchemaUnavailable
+
+logger = logging.getLogger(__name__)
+
+
+async def _link_telegram_user_identity(session, user: User, payload: dict | None = None):
+    if user is None or user.tg_id is None:
+        return None
+    try:
+        return await IdentityService.link_user_identity(
+            session=session,
+            user_id=user.id,
+            provider="telegram",
+            external_user_id=user.tg_id,
+            payload=payload,
+        )
+    except PlatformSchemaUnavailable:
+        return None
+
+
+async def _link_telegram_volunteer_identity(session, volunteer: User_volunteer, payload: dict | None = None):
+    if volunteer is None or volunteer.tg_id is None:
+        return None
+    try:
+        return await IdentityService.link_volunteer_identity(
+            session=session,
+            volunteer_id=volunteer.id,
+            provider="telegram",
+            external_user_id=volunteer.tg_id,
+            payload=payload,
+        )
+    except PlatformSchemaUnavailable:
+        return None
 
 async def check_surname(surname):
 
@@ -51,18 +86,36 @@ async def send_code(phone_number):
     code = randint(10, 99)
 
     message = f"Ваш код для подтверждения: {code}"
+    timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_read=5)
+    sms_url = "https://smsc.ru/sys/send.php"
+    params = {
+        "login": "lgjt",
+        "psw": "123456",
+        "phones": phone_number,
+        "mes": message,
+        "sender": "kotelnikiru",
+    }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url=f'https://smsc.ru/sys/send.php?login=lgjt&psw=123456&phones={phone_number}&mes={message}&sender=kotelnikiru') as response:
-
-            response_text = await response.text()
-
-            print('SMS API response:\n')
-
-            print(response_text)
-
-
-    return str(code)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url=sms_url, params=params) as response:
+                response_text = (await response.text()).strip()
+                if response.status != 200:
+                    logger.error("SMS API HTTP %s: %s", response.status, response_text)
+                    return None
+                logger.info("SMS API response: %s", response_text)
+                if not response_text:
+                    return None
+                return str(code)
+    except aiohttp.ClientError as e:
+        logger.error("SMS API network error: %s", e)
+        return None
+    except asyncio.TimeoutError:
+        logger.error("SMS API timeout for phone %s", phone_number)
+        return None
+    except Exception as e:
+        logger.error("SMS API unexpected error: %s", e, exc_info=True)
+        return None
 
 async def get_company_list() -> str:
 
@@ -92,15 +145,32 @@ async def check_if_company_exists(company_id: int) -> Company | None:
 async def find_user_by_tg_id(user_tg_id):
 
     async with SessionLocal() as session:
+        try:
+            user = await IdentityService.get_user_by_identity(session, "telegram", user_tg_id)
+            if user:
+                await _link_telegram_user_identity(
+                    session,
+                    user,
+                    payload={"source": "identity_lookup"},
+                )
+                await session.commit()
+                return user.id
+        except PlatformSchemaUnavailable:
+            pass
 
         stmt = select(User).where(User.tg_id == user_tg_id)
 
         query = await session.execute(stmt)
 
-        user = query.scalars().all()
+        user = query.scalars().first()
         if user:
-
-            user = user[0]
+            linked = await _link_telegram_user_identity(
+                session,
+                user,
+                payload={"source": "legacy_tg_id_lookup"},
+            )
+            if linked is not None:
+                await session.commit()
 
             return user.id
         else:
@@ -177,6 +247,17 @@ async def register_user(user_botdata) -> True | False:
             sms_ts = user_botdata.get('sms_confirmed_at')
             if sms_ts:
                 user.sms_confirmed_at = datetime.fromisoformat(sms_ts)
+
+            await _link_telegram_user_identity(
+                session,
+                user,
+                payload={
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "father_name": user.father_name,
+                    "phone_number": user.phone_number,
+                },
+            )
             await session.commit()
 
             await session.refresh(user)
@@ -401,7 +482,7 @@ async def gather_company_stats():
 
 async def get_user_stats():
     async with SessionLocal() as session:
-        now = datetime.now(timezone.utc)  # adjust if your timestamps are naive
+        now = datetime.utcnow()
 
         stmt = select(
             func.count(User.id)
@@ -513,6 +594,18 @@ async def record_block(user_tg_id):
         user_who_blocked = User_who_blocked(tg_id=user_tg_id, blocked_at=timenow)
         session.add(user_who_blocked)
 
+        try:
+            await IdentityService.record_blocked_identity_event(
+                session=session,
+                provider="telegram",
+                external_user_id=user_tg_id,
+                blocked_at=timenow,
+                user_id=user.id if user else None,
+                payload={"source": "record_block"},
+            )
+        except PlatformSchemaUnavailable:
+            pass
+
         print("Added user to blocked table")
 
         await session.commit()
@@ -542,6 +635,12 @@ async def add_volunteer(user_tg_id: int, added_by: int = None, name: str = None)
             volunteer.added_by = added_by
             volunteer.name = name
             session.add(volunteer)
+            await session.flush()
+            await _link_telegram_volunteer_identity(
+                session,
+                volunteer,
+                payload={"name": volunteer.name, "added_by": added_by},
+            )
             await session.commit()
             await session.refresh(volunteer)
             return volunteer.id
@@ -551,9 +650,26 @@ async def add_volunteer(user_tg_id: int, added_by: int = None, name: str = None)
 
 async def is_volunteer(user_tg_id):
 
-    stmt = select(User_volunteer).where(User_volunteer.tg_id == user_tg_id)
-
     async with SessionLocal() as session:
+        try:
+            volunteer = await IdentityService.get_volunteer_by_identity(
+                session,
+                "telegram",
+                user_tg_id,
+            )
+            if volunteer is not None:
+                await _link_telegram_volunteer_identity(
+                    session,
+                    volunteer,
+                    payload={"source": "identity_lookup"},
+                )
+                await session.commit()
+                return True
+        except PlatformSchemaUnavailable:
+            pass
+
+        stmt = select(User_volunteer).where(User_volunteer.tg_id == user_tg_id)
+
         query = await session.execute(stmt)
 
         volunteer = query.scalars().one_or_none()
@@ -561,21 +677,39 @@ async def is_volunteer(user_tg_id):
         if volunteer is None:
             return False
         else:
+            linked = await _link_telegram_volunteer_identity(
+                session,
+                volunteer,
+                payload={"source": "legacy_tg_id_lookup"},
+            )
+            if linked is not None:
+                await session.commit()
             return True
 
 
 async def update_volunteer_tg_name(tg_id: int, first_name: str, last_name: str = None):
     """Обновить имя волонтёра из Telegram, если оно не задано вручную"""
     async with SessionLocal() as session:
-        stmt = select(User_volunteer).where(User_volunteer.tg_id == tg_id)
-        result = await session.execute(stmt)
-        volunteer = result.scalars().one_or_none()
+        try:
+            volunteer = await IdentityService.get_volunteer_by_identity(session, "telegram", tg_id)
+        except PlatformSchemaUnavailable:
+            volunteer = None
+
+        if volunteer is None:
+            stmt = select(User_volunteer).where(User_volunteer.tg_id == tg_id)
+            result = await session.execute(stmt)
+            volunteer = result.scalars().one_or_none()
 
         if volunteer and not volunteer.name_manual:
             tg_name = first_name
             if last_name:
                 tg_name += f" {last_name}"
             volunteer.name = tg_name
+            await _link_telegram_volunteer_identity(
+                session,
+                volunteer,
+                payload={"name": tg_name},
+            )
             await session.commit()
 
 

@@ -6,7 +6,8 @@
 
 import logging
 from sqlalchemy import text, inspect
-from db import engine
+from db import engine, DATABASE_URI
+from models import Base
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,14 @@ async def check_and_migrate():
     """
     logger.info("Checking database migrations...")
 
+    # Для PostgreSQL/MySQL используем Alembic, а не ручной ALTER из этого модуля.
+    if not DATABASE_URI.startswith("sqlite"):
+        logger.info("Auto-migrate skipped for non-SQLite database")
+        return
+
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
         # Получаем инспектор для проверки структуры таблиц
         def get_columns(connection, table_name):
             inspector = inspect(connection)
