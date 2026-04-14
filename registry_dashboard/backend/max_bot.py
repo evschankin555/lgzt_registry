@@ -368,12 +368,12 @@ class MaxBotService:
             return
 
         if payload == "menu:register":
-            await self._safe_answer_callback(event.callback_id)
+            await self._safe_answer_callback(event.callback_id, notification="Открываю регистрацию")
             await self._start_registration(event)
             return
 
         if payload == "menu:profile":
-            await self._safe_answer_callback(event.callback_id)
+            await self._safe_answer_callback(event.callback_id, notification="Открываю профиль")
             await self._handle_profile_request(event)
             return
 
@@ -405,7 +405,7 @@ class MaxBotService:
             except ValueError:
                 await self._safe_answer_callback(event.callback_id, notification="Некорректная страница")
                 return
-            await self._safe_answer_callback(event.callback_id)
+            await self._safe_answer_callback(event.callback_id, notification="Обновляю список")
             await self._show_company_selection(event, data, page=page, edit_message_id=event.message_id)
             return
 
@@ -415,7 +415,7 @@ class MaxBotService:
             except ValueError:
                 await self._safe_answer_callback(event.callback_id, notification="Некорректный идентификатор")
                 return
-            await self._safe_answer_callback(event.callback_id)
+            await self._safe_answer_callback(event.callback_id, notification="Сохраняю выбор")
             await self._finalize_registration(event, data, company_id)
             return
 
